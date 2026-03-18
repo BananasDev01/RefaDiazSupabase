@@ -1,0 +1,32 @@
+name: Backup DB
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup-db:
+    runs-on: ubuntu-latest
+    env:
+      BACKUP_TIMEZONE: America/Monterrey
+      DB_RETENTION_DAYS: "30"
+      DRIVE_ROOT_FOLDER: refadiaz-backups
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SHARED_DRIVE_ID: ${{ secrets.SHARED_DRIVE_ID }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Run DB backup
+        run: node scripts/backups/db-backup.js
