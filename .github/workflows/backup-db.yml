@@ -29,4 +29,4 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
       - name: Run DB backup
-        run: node scripts/backups/db-backup.js
+        run: node supabase/scripts/backups/db-backup.js
