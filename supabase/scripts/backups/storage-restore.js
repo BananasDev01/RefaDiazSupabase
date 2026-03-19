@@ -30,8 +30,28 @@ async function storageRequest(url, serviceRoleKey, options = {}) {
     body: options.body,
   });
 
-  if (options.allow409 && response.status === 409) {
-    return null;
+  if (options.allow409) {
+    if (response.status === 409) {
+      return null;
+    }
+
+    if (response.status === 400) {
+      const duplicatePayload = await response.json().catch(() => null);
+      const duplicateMessage = duplicatePayload?.message || "";
+      const duplicateStatusCode = String(duplicatePayload?.statusCode || "");
+
+      if (
+        duplicateStatusCode === "409" ||
+        /already exists/i.test(duplicateMessage) ||
+        /duplicate/i.test(duplicateMessage)
+      ) {
+        return null;
+      }
+
+      throw new Error(
+        `Supabase Storage request failed: ${response.status} ${JSON.stringify(duplicatePayload)}`
+      );
+    }
   }
 
   if (!response.ok) {
@@ -50,10 +70,73 @@ async function resolveArtifacts(options) {
 
   if (sourceDir) {
     const resolvedSourceDir = path.resolve(sourceDir);
+    const manifestDir = path.join(resolvedSourceDir, "manifests");
+    const archiveDir = path.join(resolvedSourceDir, "archives");
+    const bucketManifestPath = path.join(manifestDir, "bucket-manifest.json");
+
+    if (!fs.existsSync(bucketManifestPath)) {
+      throw new Error(
+        `Missing bucket-manifest.json under ${manifestDir}. Expected a storage backup folder.`
+      );
+    }
+
+    if (fs.existsSync(archiveDir)) {
+      return {
+        rootDir: resolvedSourceDir,
+        manifestDir,
+        archiveDir,
+      };
+    }
+
+    const normalizedRoot = path.join(resolvedSourceDir, ".restore-normalized");
+    const normalizedManifestDir = path.join(normalizedRoot, "manifests");
+    const normalizedArchiveDir = path.join(normalizedRoot, "archives");
+    const bucketManifest = readJsonFile(bucketManifestPath);
+
+    ensureDirSync(normalizedManifestDir);
+    ensureDirSync(normalizedArchiveDir);
+
+    fs.copyFileSync(bucketManifestPath, path.join(normalizedManifestDir, "bucket-manifest.json"));
+
+    const runManifestPath = path.join(manifestDir, "run-manifest.json");
+
+    if (fs.existsSync(runManifestPath)) {
+      fs.copyFileSync(runManifestPath, path.join(normalizedManifestDir, "run-manifest.json"));
+    }
+
+    for (const bucket of bucketManifest.buckets) {
+      const bucketFolder = path.join(resolvedSourceDir, bucket.id);
+      const bucketManifestFilePath = path.join(bucketFolder, `${bucket.id}-manifest.json`);
+
+      if (!fs.existsSync(bucketManifestFilePath)) {
+        throw new Error(
+          `Missing bucket manifest for ${bucket.id} at ${bucketManifestFilePath}`
+        );
+      }
+
+      const bucketPayload = readJsonFile(bucketManifestFilePath);
+      const bucketArchivePath = path.join(bucketFolder, bucketPayload.archive.fileName);
+
+      if (!fs.existsSync(bucketArchivePath)) {
+        throw new Error(
+          `Missing bucket archive for ${bucket.id} at ${bucketArchivePath}`
+        );
+      }
+
+      fs.copyFileSync(
+        bucketManifestFilePath,
+        path.join(normalizedManifestDir, `${bucket.id}-manifest.json`)
+      );
+      fs.copyFileSync(
+        bucketArchivePath,
+        path.join(normalizedArchiveDir, bucketPayload.archive.fileName)
+      );
+    }
+
     return {
-      rootDir: resolvedSourceDir,
-      manifestDir: path.join(resolvedSourceDir, "manifests"),
-      archiveDir: path.join(resolvedSourceDir, "archives"),
+      rootDir: normalizedRoot,
+      manifestDir: normalizedManifestDir,
+      archiveDir: normalizedArchiveDir,
     };
   }
 

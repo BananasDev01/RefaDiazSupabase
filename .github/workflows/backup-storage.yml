@@ -2,7 +2,7 @@ name: Backup Storage
 
 on:
   schedule:
-    - cron: "0 9 * * *"
+    - cron: "0 9 * * 5"
   workflow_dispatch:
 
 permissions:
@@ -16,8 +16,6 @@ jobs:
       STORAGE_RETENTION_DAYS: "90"
       DRIVE_ROOT_FOLDER: refadiaz-backups
       STORAGE_BUCKETS: products,brands,radiators,providers,car-models,vehicle-notes
-      CADENCE_DAYS: "3"
-      CADENCE_ANCHOR_DATE: "2026-03-10"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
@@ -32,11 +30,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - name: Check cadence
-        id: cadence
-        run: node supabase/scripts/backups/cadence-check.js
-
       - name: Run storage backup
-        if: github.event_name == 'workflow_dispatch' || steps.cadence.outputs.should_run == 'true'
         run: node supabase/scripts/backups/storage-backup.js

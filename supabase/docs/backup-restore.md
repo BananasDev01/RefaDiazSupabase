@@ -198,6 +198,15 @@ SUPABASE_SERVICE_ROLE_KEY="..." \
 node scripts/backups/storage-restore.js --source-dir /absolute/path/.temp/backups/storage/<timestamp>
 ```
 
+`--source-dir` accepts both local layouts:
+
+- internal backup layout:
+  - `manifests/`
+  - `archives/`
+- downloaded Google Drive layout:
+  - `manifests/`
+  - one folder per bucket containing `<bucket>-manifest.json` and `<bucket>-<timestamp>.tar.gz`
+
 From Google Drive folder:
 
 ```bash
