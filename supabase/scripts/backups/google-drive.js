@@ -29,6 +29,22 @@ function getServiceAccountCredentials() {
   return credentials;
 }
 
+function getOAuthRefreshTokenCredentials() {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN || "";
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    return null;
+  }
+
+  return {
+    clientId,
+    clientSecret,
+    refreshToken,
+  };
+}
+
 function base64UrlEncode(value) {
   return Buffer.from(value)
     .toString("base64")
@@ -38,6 +54,28 @@ function base64UrlEncode(value) {
 }
 
 async function getAccessToken() {
+  const oauthCredentials = getOAuthRefreshTokenCredentials();
+
+  if (oauthCredentials) {
+    const response = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: oauthCredentials.clientId,
+        client_secret: oauthCredentials.clientSecret,
+        refresh_token: oauthCredentials.refreshToken,
+        grant_type: "refresh_token",
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Unable to obtain Google OAuth access token: ${await response.text()}`);
+    }
+
+    const payload = await response.json();
+    return payload.access_token;
+  }
+
   const credentials = getServiceAccountCredentials();
   const nowInSeconds = Math.floor(Date.now() / 1000);
   const header = { alg: "RS256", typ: "JWT" };
@@ -71,7 +109,7 @@ async function getAccessToken() {
   });
 
   if (!response.ok) {
-    throw new Error(`Unable to obtain Google access token: ${await response.text()}`);
+    throw new Error(`Unable to obtain Google service account access token: ${await response.text()}`);
   }
 
   const payload = await response.json();

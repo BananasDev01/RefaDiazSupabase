@@ -24,24 +24,55 @@ Supabase managed backups remain the first option for fast point-in-time recovery
 - `DATABASE_URL`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `GOOGLE_SERVICE_ACCOUNT_JSON`
 - `GOOGLE_DRIVE_FOLDER_ID`
 
-Optional:
+For personal Google Drive with OAuth:
 
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GOOGLE_OAUTH_REFRESH_TOKEN`
+
+Optional compatibility fallback for Shared Drive + service account:
+
+- `GOOGLE_SERVICE_ACCOUNT_JSON`
 - `SHARED_DRIVE_ID`
 - `DRIVE_ROOT_FOLDER_ID`
 
 Recommended for personal Google Drive:
 
 - create a folder in `My Drive`
-- share that folder with the service account email as `Editor`
 - store that folder id in `GOOGLE_DRIVE_FOLDER_ID`
+- authenticate the workflow with OAuth user credentials, not with a service account
 
 Compatibility fallback:
 
 - if you still use a Shared Drive, you can keep `SHARED_DRIVE_ID`
+- in that Shared Drive case, `GOOGLE_SERVICE_ACCOUNT_JSON` still works
 - if you prefer an already-created root backup folder in Shared Drive, `DRIVE_ROOT_FOLDER_ID` works too
+
+## Google Drive Auth Modes
+
+### Personal Google Drive
+
+Use OAuth refresh token credentials:
+
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GOOGLE_OAUTH_REFRESH_TOKEN`
+- `GOOGLE_DRIVE_FOLDER_ID`
+
+Do not use a service account for uploads to `My Drive`. Google blocks that path because service accounts do not have personal Drive storage quota.
+
+### Shared Drive / Google Workspace
+
+You can keep the service account flow:
+
+- `GOOGLE_SERVICE_ACCOUNT_JSON`
+- `SHARED_DRIVE_ID`
+
+Optionally:
+
+- `DRIVE_ROOT_FOLDER_ID`
 
 ## Backup Layout In Google Drive Folder
 
