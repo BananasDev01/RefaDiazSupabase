@@ -194,10 +194,6 @@ async function main() {
     (bucketId) => !allBuckets.some((bucket) => bucket.id === bucketId)
   );
 
-  if (missingBuckets.length > 0) {
-    throw new Error(`Missing expected storage buckets: ${missingBuckets.join(", ")}`);
-  }
-
   const bucketConfigs = allBuckets
     .filter((bucket) => selectedBuckets.includes(bucket.id))
     .map((bucket) => ({
@@ -214,6 +210,7 @@ async function main() {
     timeZone,
     gitSha: getGitSha(),
     buckets: bucketConfigs,
+    missingBuckets,
   };
   const bucketManifestPath = path.join(manifestRoot, "bucket-manifest.json");
   const runManifest = {
@@ -223,9 +220,23 @@ async function main() {
     gitSha: getGitSha(),
     retentionDays,
     driveFolderPath: `${driveRootFolder}/storage/${timestamp.localDatePath}`,
+    requestedBuckets: selectedBuckets,
+    missingBuckets,
     buckets: [],
     status: "success",
   };
+
+  if (bucketConfigs.length === 0) {
+    throw new Error(
+      `None of the requested storage buckets exist in this environment: ${selectedBuckets.join(", ")}`
+    );
+  }
+
+  if (missingBuckets.length > 0) {
+    process.stdout.write(
+      `Skipping missing storage buckets: ${missingBuckets.join(", ")}\n`
+    );
+  }
 
   writeJsonFile(bucketManifestPath, bucketManifestPayload);
 
