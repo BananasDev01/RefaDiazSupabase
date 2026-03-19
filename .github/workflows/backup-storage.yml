@@ -1,21 +1,25 @@
-name: Backup DB
+name: Backup Storage
 
 on:
   schedule:
-    - cron: "0 8 * * *"
+    - cron: "0 9 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  backup-db:
+  backup-storage:
     runs-on: ubuntu-latest
     env:
       BACKUP_TIMEZONE: America/Monterrey
-      DB_RETENTION_DAYS: "30"
+      STORAGE_RETENTION_DAYS: "90"
       DRIVE_ROOT_FOLDER: refadiaz-backups
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      STORAGE_BUCKETS: products,brands,radiators,providers,car-models,vehicle-notes
+      CADENCE_DAYS: "3"
+      CADENCE_ANCHOR_DATE: "2026-03-10"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
       GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
       GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -29,8 +33,10 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Check cadence
+        id: cadence
+        run: node supabase/scripts/backups/cadence-check.js
 
-      - name: Run DB backup
-        run: node supabase/scripts/backups/db-backup.js
+      - name: Run storage backup
+        if: github.event_name == 'workflow_dispatch' || steps.cadence.outputs.should_run == 'true'
+        run: node supabase/scripts/backups/storage-backup.js
