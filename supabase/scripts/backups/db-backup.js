@@ -48,6 +48,7 @@ async function main() {
     "drive-root-folder",
     process.env.DRIVE_ROOT_FOLDER || "refadiaz-backups"
   );
+  const explicitDriveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.DRIVE_ROOT_FOLDER_ID || "";
 
   ensureDirSync(runDir);
 
@@ -107,13 +108,16 @@ async function main() {
   }
 
   const accessToken = await getAccessToken();
-  const sharedDriveId = getRequiredEnv("SHARED_DRIVE_ID");
-  const driveRootParentId = process.env.DRIVE_ROOT_FOLDER_ID || sharedDriveId;
+  const sharedDriveId = process.env.SHARED_DRIVE_ID || "";
+  const driveContextId = explicitDriveFolderId || getRequiredEnv("SHARED_DRIVE_ID");
+  const backupRootFolder = explicitDriveFolderId
+    ? { id: driveContextId }
+    : await ensureFolderPath(accessToken, sharedDriveId, driveContextId, driveRootFolder);
   const targetFolder = await ensureFolderPath(
     accessToken,
     sharedDriveId,
-    driveRootParentId,
-    `${driveRootFolder}/db/${timestamp.localDatePath}`
+    backupRootFolder.id,
+    `db/${timestamp.localDatePath}`
   );
 
   await uploadFile(accessToken, sharedDriveId, targetFolder.id, dumpFileName, dumpFilePath, {
@@ -135,7 +139,7 @@ async function main() {
 
   if (!skipCleanup) {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
-    const deletedCount = await cleanupCategory(accessToken, sharedDriveId, "db", cutoff);
+    const deletedCount = await cleanupCategory(accessToken, backupRootFolder.id, "db", cutoff);
     process.stdout.write(`Deleted ${deletedCount} expired DB backup files from Google Drive\n`);
   }
 

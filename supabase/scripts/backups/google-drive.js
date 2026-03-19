@@ -122,15 +122,18 @@ async function driveRequest(accessToken, pathname, options = {}) {
   return response.json();
 }
 
-async function listFiles(accessToken, driveId, extraQuery) {
+function isFolder(item) {
+  return item.mimeType === "application/vnd.google-apps.folder";
+}
+
+async function listFiles(accessToken, extraQuery) {
   let pageToken = undefined;
   const files = [];
 
   do {
     const payload = await driveRequest(accessToken, "/files", {
       query: {
-        corpora: "drive",
-        driveId,
+        corpora: "allDrives",
         includeItemsFromAllDrives: "true",
         supportsAllDrives: "true",
         pageSize: "1000",
@@ -154,7 +157,7 @@ async function findChildFolder(accessToken, driveId, parentId, folderName) {
     "mimeType = 'application/vnd.google-apps.folder'",
     "trashed = false",
   ].join(" and ");
-  const folders = await listFiles(accessToken, driveId, query);
+  const folders = await listFiles(accessToken, query);
   return folders[0] || null;
 }
 
@@ -271,18 +274,35 @@ async function deleteFile(accessToken, fileId) {
 }
 
 async function cleanupCategory(accessToken, driveId, category, olderThanIso) {
-  const query = [
-    "trashed = false",
-    `createdTime < '${olderThanIso}'`,
-    `appProperties has { key='backup_category' and value='${escapeQueryValue(category)}' }`,
-  ].join(" and ");
-  const files = await listFiles(accessToken, driveId, query);
+  const rootFolderId = driveId;
+  const files = [];
+  const queue = [rootFolderId];
 
-  for (const file of files) {
+  while (queue.length > 0) {
+    const parentId = queue.shift();
+    const children = await listChildren(accessToken, driveId, parentId);
+
+    for (const child of children) {
+      if (isFolder(child)) {
+        queue.push(child.id);
+        continue;
+      }
+
+      files.push(child);
+    }
+  }
+
+  const filteredFiles = files.filter((file) => {
+    const createdTime = file.createdTime || "";
+    const backupCategory = file.appProperties?.backup_category || "";
+    return createdTime < olderThanIso && backupCategory === category;
+  });
+
+  for (const file of filteredFiles) {
     await deleteFile(accessToken, file.id);
   }
 
-  return files.length;
+  return filteredFiles.length;
 }
 
 async function findFileByName(accessToken, driveId, parentId, fileName) {
@@ -291,13 +311,13 @@ async function findFileByName(accessToken, driveId, parentId, fileName) {
     `name = '${escapeQueryValue(fileName)}'`,
     "trashed = false",
   ].join(" and ");
-  const files = await listFiles(accessToken, driveId, query);
+  const files = await listFiles(accessToken, query);
   return files[0] || null;
 }
 
 async function listChildren(accessToken, driveId, parentId) {
   const query = [`'${escapeQueryValue(parentId)}' in parents`, "trashed = false"].join(" and ");
-  return listFiles(accessToken, driveId, query);
+  return listFiles(accessToken, query);
 }
 
 async function downloadFileToPath(accessToken, fileId, destinationPath) {

@@ -4,7 +4,7 @@ This repository now includes operational backup tooling for:
 
 - `public` schema data (`pg_dump` custom format, daily)
 - Supabase Storage buckets (`products`, `brands`, `radiators`, `providers`, `car-models`, `vehicle-notes`) every 3 days
-- Google Shared Drive as the external retention layer
+- Google Drive folder as the external retention layer
 
 Supabase managed backups remain the first option for fast point-in-time recovery on the current production project. The scripts in this repo add a portable backup path for disaster recovery into a different project.
 
@@ -24,16 +24,26 @@ Supabase managed backups remain the first option for fast point-in-time recovery
 - `DATABASE_URL`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `SHARED_DRIVE_ID`
 - `GOOGLE_SERVICE_ACCOUNT_JSON`
+- `GOOGLE_DRIVE_FOLDER_ID`
 
 Optional:
 
+- `SHARED_DRIVE_ID`
 - `DRIVE_ROOT_FOLDER_ID`
 
-`DRIVE_ROOT_FOLDER_ID` is useful if your Shared Drive root cannot be addressed directly with the drive id in your Google Workspace setup. If omitted, the scripts try to use `SHARED_DRIVE_ID` as the parent for the top-level `refadiaz-backups` folder.
+Recommended for personal Google Drive:
 
-## Backup Layout In Google Drive
+- create a folder in `My Drive`
+- share that folder with the service account email as `Editor`
+- store that folder id in `GOOGLE_DRIVE_FOLDER_ID`
+
+Compatibility fallback:
+
+- if you still use a Shared Drive, you can keep `SHARED_DRIVE_ID`
+- if you prefer an already-created root backup folder in Shared Drive, `DRIVE_ROOT_FOLDER_ID` works too
+
+## Backup Layout In Google Drive Folder
 
 Top-level folder:
 
@@ -134,7 +144,7 @@ From Google Drive folder:
 
 ```bash
 DATABASE_URL="postgresql://..." \
-SHARED_DRIVE_ID="<drive-id>" \
+GOOGLE_DRIVE_FOLDER_ID="<folder-id>" \
 GOOGLE_SERVICE_ACCOUNT_JSON="$(cat service-account.json)" \
 node scripts/backups/db-restore.js --drive-path db/2026/03/10
 ```
@@ -162,7 +172,7 @@ From Google Drive folder:
 ```bash
 SUPABASE_URL="https://<project-ref>.supabase.co" \
 SUPABASE_SERVICE_ROLE_KEY="..." \
-SHARED_DRIVE_ID="<drive-id>" \
+GOOGLE_DRIVE_FOLDER_ID="<folder-id>" \
 GOOGLE_SERVICE_ACCOUNT_JSON="$(cat service-account.json)" \
 node scripts/backups/storage-restore.js --drive-path storage/2026/03/10
 ```
