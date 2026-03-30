@@ -56,6 +56,10 @@
       "value": "2"
     },
     {
+      "key": "fileTypeIdVehicleNote",
+      "value": "3"
+    },
+    {
       "key": "productTypeIdRadiator",
       "value": "1"
     },
@@ -137,6 +141,18 @@
     },
     {
       "key": "fileIdCreated",
+      "value": ""
+    },
+    {
+      "key": "vehicleNoteIdCreated",
+      "value": ""
+    },
+    {
+      "key": "vehicleNoteFileIdPrimary",
+      "value": ""
+    },
+    {
+      "key": "vehicleNoteFileIdSecondary",
       "value": ""
     },
     {
@@ -289,6 +305,26 @@
     },
     {
       "key": "fileNameUpdate",
+      "value": ""
+    },
+    {
+      "key": "vehicleNoteTitleCreate",
+      "value": ""
+    },
+    {
+      "key": "vehicleNoteTitleUpdate",
+      "value": ""
+    },
+    {
+      "key": "vehicleNoteFilePrimaryCreate",
+      "value": ""
+    },
+    {
+      "key": "vehicleNoteFileSecondaryCreate",
+      "value": ""
+    },
+    {
+      "key": "vehicleNoteFilePrimaryUpdate",
       "value": ""
     }
   ],
@@ -1370,7 +1406,128 @@
       ]
     },
     {
-      "name": "08 Files Flow",
+      "name": "08 Vehicle Notes Flow",
+      "item": [
+        {
+          "name": "POST /vehicle-notes",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const suffix = Date.now().toString();",
+                  "pm.collectionVariables.set('vehicleNoteTitleCreate', `Postman Vehicle Note ${suffix}`);",
+                  "pm.collectionVariables.set('vehicleNoteFilePrimaryCreate', `vehicle-note-primary-${suffix}`);",
+                  "pm.collectionVariables.set('vehicleNoteFileSecondaryCreate', `vehicle-note-secondary-${suffix}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('vehicleNoteIdCreated', String(body.id));",
+                  "const files = body.files || [];",
+                  "if (files[0]) pm.collectionVariables.set('vehicleNoteFileIdPrimary', String(files[0].id));",
+                  "if (files[1]) pm.collectionVariables.set('vehicleNoteFileIdSecondary', String(files[1].id));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"{{vehicleNoteTitleCreate}}\",\n  \"contentMarkdown\": \"# Procedimiento de purga\\n\\n- Revisar abanico\\n- No abrir en caliente\\n- Confirmar nivel final\",\n  \"carModelId\": {{modelIdSeed}},\n  \"files\": [\n    {\n      \"name\": \"{{vehicleNoteFilePrimaryCreate}}.png\",\n      \"mimeType\": \"image/png\",\n      \"storagePath\": \"vehicle-notes/{{vehicleNoteFilePrimaryCreate}}.png\",\n      \"orderId\": 1\n    },\n    {\n      \"name\": \"{{vehicleNoteFileSecondaryCreate}}.png\",\n      \"mimeType\": \"image/png\",\n      \"storagePath\": \"vehicle-notes/{{vehicleNoteFileSecondaryCreate}}.png\",\n      \"orderId\": 2\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/vehicle-notes"
+          }
+        },
+        {
+          "name": "GET /vehicle-notes",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/vehicle-notes"
+          }
+        },
+        {
+          "name": "GET /vehicle-notes?q={{vehicleNoteTitleCreate}}",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/vehicle-notes?q={{vehicleNoteTitleCreate}}"
+          }
+        },
+        {
+          "name": "GET /vehicle-notes?q=Ford",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/vehicle-notes?q=Ford"
+          }
+        },
+        {
+          "name": "GET /vehicle-notes?carModelId={{modelIdSeed}}&brandId={{brandIdSeed}}",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/vehicle-notes?carModelId={{modelIdSeed}}&brandId={{brandIdSeed}}"
+          }
+        },
+        {
+          "name": "GET /vehicle-notes?id={{vehicleNoteIdCreated}}",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/vehicle-notes?id={{vehicleNoteIdCreated}}"
+          }
+        },
+        {
+          "name": "PUT /vehicle-notes?id={{vehicleNoteIdCreated}}",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const suffix = Date.now().toString();",
+                  "pm.collectionVariables.set('vehicleNoteTitleUpdate', `Postman Vehicle Note Updated ${suffix}`);",
+                  "pm.collectionVariables.set('vehicleNoteFilePrimaryUpdate', `vehicle-note-primary-updated-${suffix}`);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"{{vehicleNoteTitleUpdate}}\",\n  \"contentMarkdown\": \"# Procedimiento actualizado\\n\\n- Confirmar purga completa\\n- Revisar fugas\\n- Validar temperatura de operación\",\n  \"carModelId\": {{modelIdSeed}},\n  \"files\": [\n    {\n      \"id\": {{vehicleNoteFileIdPrimary}},\n      \"name\": \"{{vehicleNoteFilePrimaryUpdate}}.png\",\n      \"mimeType\": \"image/png\",\n      \"storagePath\": \"vehicle-notes/{{vehicleNoteFilePrimaryUpdate}}.png\",\n      \"orderId\": 1\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/vehicle-notes?id={{vehicleNoteIdCreated}}"
+          }
+        },
+        {
+          "name": "DELETE /vehicle-notes?id={{vehicleNoteIdCreated}}",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/vehicle-notes?id={{vehicleNoteIdCreated}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 Files Flow",
       "item": [
         {
           "name": "POST /files",

@@ -2,6 +2,25 @@
 
 ## 2026-03-08
 
+### Vehicle Notes
+
+Implemented a dedicated `vehicle_note` knowledge entity for vehicle installation and repair notes, separate from `product`.
+
+High-level changes:
+- Added the `vehicle_note` table with optional association to `car_model`.
+- Added `Vehicle Note Image` to `file_type` and reused `file` for ordered note images.
+- Added storage policies for the `vehicle-notes` bucket.
+- Added the `vehicle-notes` edge function with list, detail, create, update, and soft-delete behavior.
+- Implemented Markdown body storage through `contentMarkdown`.
+- Enriched note responses with `carModel`, `brand`, and ordered `files`.
+- Added list search by note title, car model name, and brand name.
+- Added Postman examples for create, list, search, update, and delete flows.
+
+Implementation notes:
+- Each note can point to zero or one `car_model` in this iteration.
+- Note deletion is logical through `active = false`.
+- The storage bucket itself must exist in the environment as `vehicle-notes`; this change only adds the access policies.
+
 ### Accessories And Product Categories
 
 Implemented accessory support on top of `product`, including category management, accessory-specific search behavior, and compatibility with vehicle models without year ranges.
