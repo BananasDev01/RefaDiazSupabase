@@ -77,7 +77,7 @@ async function findModelAndBrandIds(tokens: string[]): Promise<FoundIds> {
 
   // Caso 1: El usuario especificó tanto modelos como marcas (ej. "Ford Lobo")
   // Buscamos la INTERSECCIÓN: modelos que coincidan Y que pertenezcan a la marca.
-  if (modelIdsFromTokens.length > 0 && brandIdsFromTokens.length > 0) {
+  if (modelIdsFromTokens.length > 0 && brandIdsFromTokens.length > 0 && tokens.length > 1) {
     const { data: filteredModelData } = await supabase
       .from("car_model")
       .select("id")
