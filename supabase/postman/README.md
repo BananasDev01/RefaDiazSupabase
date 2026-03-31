@@ -23,5 +23,5 @@ Notes:
 - Create requests save generated IDs into collection variables, so the following `GET -> PUT -> DELETE` requests can be executed without manual edits.
 - The collection covers the edge functions that currently exist in `functions/`.
 - `login` / `logout` are mentioned in [functions/README.md](/Users/eduardomendoza/Projects/RefaDiazSystem/RefaDiazSupabase/supabase/functions/README.md) but there are no function folders for them in this workspace.
-- Product components are currently covered in the collection under `07 Products Flow > Components Example Flow`, including create and update examples.
-- The collection assumes `TAPA` resolves to `productTypeId = 2`. If your database differs, update `productTypeIdTapa` before running that flow.
+- Product components are currently covered in the collection under `07 Products Flow > Components Example Flow`, including `TAPA`, `ABANICO`, and radiator association examples.
+- The collection assumes `TAPA` resolves to `productTypeId = 2` and `ABANICO` resolves to `productTypeId = 4`. If your database differs, update `productTypeIdTapa` and `productTypeIdAbanico` before running that flow.

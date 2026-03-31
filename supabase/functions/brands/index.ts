@@ -31,7 +31,8 @@ async function handleGetBrands(req: Request): Promise<Response> {
   const { data: brands, error: brandError } = await supabase
     .from("brand")
     .select("*")
-    .eq("active", true);
+    .eq("active", true)
+    .order("name", { ascending: true });
 
   if (brandError) {
     return new Response(
@@ -166,7 +167,8 @@ async function handleGetBrandModels(req: Request): Promise<Response> {
       .from("car_model")
       .select("*")
       .eq("brand_id", brandId)
-      .eq("active", true);
+      .eq("active", true)
+      .order("name", { ascending: true });
 
     if (name) {
       query = query.ilike("name", `%${name}%`);

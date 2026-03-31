@@ -15,7 +15,8 @@ export async function handleGetModels(req: Request): Promise<Response> {
     let query = supabase
       .from("car_model")
       .select("*, brand(name, brand_type_id)")
-      .eq("active", true);
+      .eq("active", true)
+      .order("name", { ascending: true });
 
     if (name) {
       query = query.ilike("name", `%${name}%`);

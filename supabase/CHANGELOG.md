@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-30
+
+### Abanico As Product Component
+
+Added `ABANICO` as a supported `product_type` so radiator components can now be represented with the same generic `product` + `product_component` model already used by `TAPA`.
+
+High-level changes:
+- Seeded `ABANICO` in `product_type` through a dedicated migration.
+- Extended the Postman component flow with an `ABANICO` example product.
+- Updated the radiator component example to reference both `TAPA` and `ABANICO`.
+
 ## 2026-03-08
 
 ### Vehicle Notes

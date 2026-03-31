@@ -3,6 +3,7 @@ import { supabase } from "./config.ts";
 
 interface AccessoryQueryAnalysis {
   tokens: string[];
+  year: number | null;
 }
 
 interface TokenMatchIds {
@@ -75,9 +76,38 @@ function normalizeAccessoryProducts(products: any[] | null | undefined) {
 }
 
 function parseAccessoryQuery(query: string): AccessoryQueryAnalysis {
+  const yearRegex = /\b(\d{4})\b/g;
+  const yearMatch = query.match(yearRegex);
+  const year = yearMatch ? parseInt(yearMatch[0], 10) : null;
+  const remainingQuery = year
+    ? query.replace(yearRegex, " ").trim()
+    : query.trim();
+
   return {
-    tokens: query.split(/\s+/).filter(Boolean),
+    tokens: remainingQuery.split(/\s+/).filter(Boolean),
+    year,
   };
+}
+
+function matchesCompatibilityYear(
+  compatibility: { initial_year: number | null; last_year: number | null },
+  year: number,
+): boolean {
+  const { initial_year, last_year } = compatibility;
+
+  if (initial_year === null && last_year === null) {
+    return true;
+  }
+
+  if (initial_year !== null && year < initial_year) {
+    return false;
+  }
+
+  if (last_year !== null && year > last_year) {
+    return false;
+  }
+
+  return true;
 }
 
 async function findTokenMatchIds(tokens: string[]): Promise<TokenMatchIds> {
@@ -173,6 +203,7 @@ async function executeAccessorySearch(
   productTypeId: string,
   nameTokens: string[],
   compatibilityModelIds: number[],
+  year: number | null,
 ) {
   const includeCompatibilityJoin = compatibilityModelIds.length > 0;
 
@@ -199,7 +230,20 @@ async function executeAccessorySearch(
     throw new Error(error.message);
   }
 
-  return data || [];
+  if (!year || !includeCompatibilityJoin) {
+    return data || [];
+  }
+
+  return (data || [])
+    .map((product: any) => ({
+      ...product,
+      product_car_model: (product.product_car_model || []).filter(
+        (compatibility: any) =>
+          compatibility.active &&
+          matchesCompatibilityYear(compatibility, year),
+      ),
+    }))
+    .filter((product: any) => product.product_car_model.length > 0);
 }
 
 /**
@@ -208,6 +252,8 @@ async function executeAccessorySearch(
  * - tokens que coinciden con marcas expanden a los modelos de la marca
  * - si hay marca + modelo, se usa la intersección
  * - tokens que no coinciden con marca/modelo se usan como filtro AND sobre product.name
+ * - si la consulta incluye un año y un modelo/marca, el año profundiza el filtro
+ *   sobre la compatibilidad encontrada
  */
 export async function handleAccessorySearch(
   q: string,
@@ -223,7 +269,7 @@ export async function handleAccessorySearch(
       });
     }
 
-    const { tokens } = parseAccessoryQuery(trimmedQuery);
+    const { tokens, year } = parseAccessoryQuery(trimmedQuery);
 
     if (tokens.length === 0) {
       return new Response(JSON.stringify([]), {
@@ -264,6 +310,7 @@ export async function handleAccessorySearch(
       productTypeId,
       nameTokens,
       compatibilityModelIds,
+      year,
     );
 
     const normalizedProducts = normalizeAccessoryProducts(searchResults);

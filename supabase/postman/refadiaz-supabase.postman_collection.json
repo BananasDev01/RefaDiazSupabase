@@ -68,6 +68,10 @@
       "value": "2"
     },
     {
+      "key": "productTypeIdAbanico",
+      "value": "4"
+    },
+    {
       "key": "productTypeIdAccessory",
       "value": "3"
     },
@@ -109,6 +113,10 @@
     },
     {
       "key": "componentProductIdCreated",
+      "value": ""
+    },
+    {
+      "key": "fanComponentProductIdCreated",
       "value": ""
     },
     {
@@ -220,6 +228,10 @@
       "value": ""
     },
     {
+      "key": "fanComponentProductNameCreate",
+      "value": ""
+    },
+    {
       "key": "componentProductNameUpdate",
       "value": ""
     },
@@ -232,6 +244,10 @@
       "value": ""
     },
     {
+      "key": "fanComponentProductDpiCreate",
+      "value": ""
+    },
+    {
       "key": "componentProductDpiUpdate",
       "value": ""
     },
@@ -241,6 +257,10 @@
     },
     {
       "key": "componentProductFileNameCreate",
+      "value": ""
+    },
+    {
+      "key": "fanComponentProductFileNameCreate",
       "value": ""
     },
     {
@@ -1183,7 +1203,55 @@
               }
             },
             {
-              "name": "POST /products radiator with components",
+              "name": "POST /products component (ABANICO)",
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const suffix = Date.now().toString();",
+                      "pm.collectionVariables.set('fanComponentProductNameCreate', `POSTMAN FAN COMPONENT ${suffix}`);",
+                      "pm.collectionVariables.set('fanComponentProductDpiCreate', `PM-FAN-${suffix}`);",
+                      "pm.collectionVariables.set('fanComponentProductFileNameCreate', `postman-fan-component-${suffix}`);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const body = pm.response.json();",
+                      "pm.collectionVariables.set('fanComponentProductIdCreated', String(body.id));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"{{fanComponentProductNameCreate}}\",\n  \"comments\": \"Postman abanico component product example\",\n  \"stockCount\": 10,\n  \"dpi\": \"{{fanComponentProductDpiCreate}}\",\n  \"productTypeId\": {{productTypeIdAbanico}},\n  \"files\": [\n    {\n      \"name\": \"{{fanComponentProductFileNameCreate}}.png\",\n      \"mimeType\": \"image/png\",\n      \"storagePath\": \"products/images/{{fanComponentProductFileNameCreate}}.png\",\n      \"orderId\": 1\n    }\n  ],\n  \"productProviders\": [\n    {\n      \"providerId\": {{providerIdSeed}},\n      \"numSeries\": \"PM-FAN-SERIES-001\",\n      \"price\": {\n        \"description\": \"Costo abanico Postman\",\n        \"cost\": \"$655.00\"\n      }\n    }\n  ],\n  \"productPrices\": [\n    {\n      \"price\": {\n        \"description\": \"Venta abanico Postman\",\n        \"cost\": \"$1,099.00\"\n      }\n    }\n  ]\n}"
+                },
+                "url": "{{baseUrl}}/products"
+              }
+            },
+            {
+              "name": "GET /products?id={{fanComponentProductIdCreated}}",
+              "request": {
+                "method": "GET",
+                "url": "{{baseUrl}}/products?id={{fanComponentProductIdCreated}}"
+              }
+            },
+            {
+              "name": "POST /products radiator with tapa + abanico components",
               "event": [
                 {
                   "listen": "prerequest",
@@ -1221,7 +1289,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"{{productNameCreate}}\",\n  \"comments\": \"Radiator created from Postman component flow\",\n  \"stockCount\": 3,\n  \"dpi\": \"{{productDpiCreate}}\",\n  \"productTypeId\": {{productTypeIdRadiator}},\n  \"files\": [\n    {\n      \"name\": \"{{productFileNameCreate}}.png\",\n      \"mimeType\": \"image/png\",\n      \"storagePath\": \"products/images/{{productFileNameCreate}}.png\",\n      \"orderId\": 1\n    }\n  ],\n  \"productProviders\": [\n    {\n      \"providerId\": {{providerIdSeed}},\n      \"numSeries\": \"PM-SERIES-001\",\n      \"price\": {\n        \"description\": \"Costo Postman\",\n        \"cost\": \"$1,234.00\"\n      }\n    }\n  ],\n  \"productPrices\": [\n    {\n      \"price\": {\n        \"description\": \"Venta Postman\",\n        \"cost\": \"$2,345.00\"\n      }\n    }\n  ],\n  \"productCarModels\": [\n    {\n      \"carModelId\": {{modelIdSeed}},\n      \"initialYear\": 2015,\n      \"lastYear\": 2020\n    }\n  ],\n  \"components\": [\n    {\n      \"componentProductId\": {{componentProductIdCreated}}\n    }\n  ]\n}"
+                  "raw": "{\n  \"name\": \"{{productNameCreate}}\",\n  \"comments\": \"Radiator created from Postman component flow\",\n  \"stockCount\": 3,\n  \"dpi\": \"{{productDpiCreate}}\",\n  \"productTypeId\": {{productTypeIdRadiator}},\n  \"files\": [\n    {\n      \"name\": \"{{productFileNameCreate}}.png\",\n      \"mimeType\": \"image/png\",\n      \"storagePath\": \"products/images/{{productFileNameCreate}}.png\",\n      \"orderId\": 1\n    }\n  ],\n  \"productProviders\": [\n    {\n      \"providerId\": {{providerIdSeed}},\n      \"numSeries\": \"PM-SERIES-001\",\n      \"price\": {\n        \"description\": \"Costo Postman\",\n        \"cost\": \"$1,234.00\"\n      }\n    }\n  ],\n  \"productPrices\": [\n    {\n      \"price\": {\n        \"description\": \"Venta Postman\",\n        \"cost\": \"$2,345.00\"\n      }\n    }\n  ],\n  \"productCarModels\": [\n    {\n      \"carModelId\": {{modelIdSeed}},\n      \"initialYear\": 2015,\n      \"lastYear\": 2020\n    }\n  ],\n  \"components\": [\n    {\n      \"componentProductId\": {{componentProductIdCreated}}\n    },\n    {\n      \"componentProductId\": {{fanComponentProductIdCreated}}\n    }\n  ]\n}"
                 },
                 "url": "{{baseUrl}}/products"
               }
