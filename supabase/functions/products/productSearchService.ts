@@ -1,114 +1,10 @@
 import { supabase } from "./config.ts";
 import { convertToCamelCase } from "../_shared/utils.ts";
-
-// Tipo para la respuesta estructurada del análisis de la consulta
-interface ParsedQuery {
-  dpis: string[];
-  year: number | null;
-  tokens: string[];
-}
-
-// Tipo para los IDs encontrados
-interface FoundIds {
-  modelIds: number[];
-  brandIds: number[];
-}
-
-/**
- * Analiza la cadena de búsqueda para extraer DPIs, año y otros tokens.
- * @param query - La cadena de búsqueda del usuario (ej. "F150 2012 DPI12345").
- * @returns Un objeto con las entidades extraídas.
- */
-function parseQuery(query: string): ParsedQuery {
-  console.log(query);
-  const dpiRegex = /\b(DPI\d+)\b/gi;
-  const yearRegex = /\b(\d{4})\b/g;
-
-  const dpis = query.match(dpiRegex) || [];
-  let remainingQuery = query.replace(dpiRegex, "").trim();
-
-  const yearMatch = remainingQuery.match(yearRegex);
-  const year = yearMatch ? parseInt(yearMatch[0], 10) : null;
-
-  if (year) {
-    remainingQuery = remainingQuery.replace(yearRegex, "").trim();
-  }
-
-  const tokens = remainingQuery.split(/\s+/).filter(Boolean);
-
-  return { dpis, year, tokens };
-}
-
-/**
- * Busca los tokens de texto como modelos y, si no se encuentran, como marcas.
- * @param tokens - Array de palabras de búsqueda.
- * @returns Un objeto con los IDs de modelos y marcas encontrados.
- */
-async function findModelAndBrandIds(tokens: string[]): Promise<FoundIds> {
-  // Listas temporales para los IDs encontrados en los tokens
-  const modelIdsFromTokens: number[] = [];
-  const brandIdsFromTokens: number[] = [];
-
-  for (const token of tokens) {
-    // 1. Buscar como modelo
-    const { data: modelData } = await supabase
-      .from("car_model")
-      .select("id")
-      .ilike("name", `%${token}%`)
-      .eq("active", true);
-    if (modelData && modelData.length > 0) {
-      modelIdsFromTokens.push(...modelData.map((m) => m.id));
-    }
-
-    // 2. Buscar como marca
-    const { data: brandData } = await supabase
-      .from("brand")
-      .select("id")
-      .ilike("name", `%${token}%`)
-      .eq("active", true);
-    if (brandData && brandData.length > 0) {
-      brandIdsFromTokens.push(...brandData.map((b) => b.id));
-    }
-  }
-  console.log("modelos", modelIdsFromTokens);
-  console.log("marcas", brandIdsFromTokens);
-
-  // --- LÓGICA CONDICIONAL PARA FILTRAR ---
-
-  // Caso 1: El usuario especificó tanto modelos como marcas (ej. "Ford Lobo")
-  // Buscamos la INTERSECCIÓN: modelos que coincidan Y que pertenezcan a la marca.
-  if (modelIdsFromTokens.length > 0 && brandIdsFromTokens.length > 0 && tokens.length > 1) {
-    const { data: filteredModelData } = await supabase
-      .from("car_model")
-      .select("id")
-      .in("id", modelIdsFromTokens)
-      .in("brand_id", brandIdsFromTokens);
-
-    const finalModelIds = filteredModelData
-      ? filteredModelData.map((m) => m.id)
-      : [];
-    return { modelIds: [...new Set(finalModelIds)], brandIds: [] }; // Solo necesitamos devolver los modelIds filtrados
-  }
-
-  // Caso 2: El usuario solo especificó marcas (ej. "Ford 2015")
-  // Buscamos TODOS los modelos de esas marcas.
-  if (brandIdsFromTokens.length > 0) {
-    const { data: modelsOfBrands } = await supabase
-      .from("car_model")
-      .select("id")
-      .in("brand_id", brandIdsFromTokens);
-
-    const finalModelIds = modelsOfBrands ? modelsOfBrands.map((m) => m.id) : [];
-    return { modelIds: [...new Set(finalModelIds)], brandIds: [] };
-  }
-
-  // Caso 3: El usuario solo especificó modelos (ej. "Lobo")
-  // Usamos directamente los modelos encontrados.
-  return {
-    modelIds: [...new Set(modelIdsFromTokens)],
-    brandIds: [],
-  };
-}
+import {
+  findModelAndBrandIds,
+  FoundIds,
+  parseSmartQuery,
+} from "./productSearchHelpers.ts";
 
 /**
  * Construye y ejecuta la consulta de búsqueda dinámica basada en los IDs y el año.
@@ -186,7 +82,7 @@ export async function handleSmartSearch(
   productTypeId: string,
 ): Promise<Response> {
   try {
-    const { dpis, year, tokens } = parseQuery(q);
+    const { dpis, year, tokens } = parseSmartQuery(q);
 
     // Caso 1: Búsqueda por DPI (prioridad máxima)
     if (dpis.length > 0) {
