@@ -360,6 +360,13 @@
           }
         },
         {
+          "name": "GET /brands?name=Fo",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/brands?name=Fo"
+          }
+        },
+        {
           "name": "GET /brands?id=16",
           "request": {
             "method": "GET",

@@ -23,16 +23,37 @@ console.log("Edge Function 'brands' iniciada...");
 // Constante para el file_type_id de imágenes de marcas (basado en tu scriptBrands.sql)
 const BRAND_IMAGE_FILE_TYPE_ID = 1;
 
+type SnakeCaseBrandBody = {
+  name?: string;
+  brand_type_id?: number;
+  active?: boolean;
+  file?: {
+    name?: string;
+    mime_type?: string;
+    storage_path?: string;
+  };
+};
+
 /**
  * GET /brands
  * Retorna todos los registros de la tabla "brand" con su "file" relacionado si existe.
+ * Soporta búsqueda por nombre con el parámetro "name".
  */
 async function handleGetBrands(req: Request): Promise<Response> {
-  const { data: brands, error: brandError } = await supabase
+  const url = new URL(req.url);
+  const name = url.searchParams.get("name");
+
+  let query = supabase
     .from("brand")
     .select("*")
     .eq("active", true)
     .order("name", { ascending: true });
+
+  if (name) {
+    query = query.ilike("name", `%${name}%`);
+  }
+
+  const { data: brands, error: brandError } = await query;
 
   if (brandError) {
     return new Response(
@@ -216,7 +237,7 @@ async function handlePostBrand(req: Request): Promise<Response> {
     }
 
     const camelCaseBody = await req.json();
-    const body = convertToSnakeCase(camelCaseBody);
+    const body = convertToSnakeCase<SnakeCaseBrandBody>(camelCaseBody);
     
     const { name, brand_type_id, active, file } = body;
 
@@ -306,7 +327,7 @@ async function handlePutBrand(req: Request): Promise<Response> {
     }
 
     const camelCaseBody = await req.json();
-    const body = convertToSnakeCase(camelCaseBody);
+    const body = convertToSnakeCase<SnakeCaseBrandBody>(camelCaseBody);
     
     const { name, brand_type_id, active, file } = body;
 
