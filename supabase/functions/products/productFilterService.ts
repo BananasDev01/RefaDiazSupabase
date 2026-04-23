@@ -45,7 +45,5 @@ export function buildProductQuery(
         .gte("product_car_model.last_year", year);
     }
   }
-
-  console.log("filteredQuery", filteredQuery);
   return filteredQuery;
 }

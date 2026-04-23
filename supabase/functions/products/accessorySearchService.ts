@@ -1,5 +1,15 @@
 import { convertToCamelCase } from "../_shared/utils.ts";
+import { ProductCatalogParams } from "./catalogTypes.ts";
 import { supabase } from "./config.ts";
+import {
+  buildProductCatalogSelect,
+  buildProductListResponse,
+  normalizeProductCatalogRows,
+} from "./list/responseMapper.ts";
+import {
+  searchProductIds,
+  sortProductsByProductIds,
+} from "./list/searchIdService.ts";
 
 interface AccessoryQueryAnalysis {
   tokens: string[];
@@ -12,67 +22,13 @@ interface TokenMatchIds {
   nameTokens: string[];
 }
 
-function buildAccessoryProductSelect(
-  includeCompatibilityJoin: boolean,
-): string {
-  const compatibilityRelation = includeCompatibilityJoin
-    ? `product_car_model!inner(
-          car_model_id,
-          initial_year,
-          last_year,
-          active,
-          car_model!inner(
-            id,
-            name,
-            brand!inner(id, name)
-          )
-        )`
-    : `product_car_model(
-          car_model_id,
-          initial_year,
-          last_year,
-          active,
-          car_model(
-            id,
-            name,
-            brand(id, name)
-          )
-        )`;
-
-  return `
-    *,
-    product_type(id, name),
-    product_category:product_category_id(
-      id,
-      name,
-      description,
-      product_type_id,
-      order_id,
-      active
-    ),
-    ${compatibilityRelation}
-  `;
+interface IdRow {
+  id: number;
 }
 
-function normalizeAccessoryProducts(products: any[] | null | undefined) {
-  const processedData = (products || []).map((product: any) => ({
-    ...product,
-    productCarModels: product.product_car_model
-      ?.map((pcm: any) => ({
-        carModelId: pcm.car_model_id,
-        initialYear: pcm.initial_year,
-        lastYear: pcm.last_year,
-        active: pcm.active,
-        carModel: pcm.car_model,
-      }))
-      .filter((pcm: any) => pcm.active) || [],
-    productCategory: product.product_category || null,
-  }));
-
-  return processedData.map((product: any) => {
-    const { product_car_model, ...rest } = product;
-    return rest;
-  });
+interface AccessorySearchResult {
+  products: any[];
+  totalCount: number;
 }
 
 function parseAccessoryQuery(query: string): AccessoryQueryAnalysis {
@@ -140,8 +96,12 @@ async function findTokenMatchIds(tokens: string[]): Promise<TokenMatchIds> {
       throw new Error(brandError.message);
     }
 
-    const matchedModelIds = (modelData || []).map((model) => model.id);
-    const matchedBrandIds = (brandData || []).map((brand) => brand.id);
+    const matchedModelIds = ((modelData || []) as IdRow[]).map((
+      model: IdRow,
+    ) => model.id);
+    const matchedBrandIds = ((brandData || []) as IdRow[]).map((
+      brand: IdRow,
+    ) => brand.id);
 
     if (matchedModelIds.length > 0) {
       modelIdsFromTokens.push(...matchedModelIds);
@@ -179,7 +139,11 @@ async function resolveCompatibilityModelIds(
       throw new Error(error.message);
     }
 
-    return [...new Set((data || []).map((model) => model.id))];
+    return [
+      ...new Set(((data || []) as IdRow[]).map((
+        model: IdRow,
+      ) => model.id)),
+    ];
   }
 
   if (brandIds.length > 0) {
@@ -193,7 +157,11 @@ async function resolveCompatibilityModelIds(
       throw new Error(error.message);
     }
 
-    return [...new Set((data || []).map((model) => model.id))];
+    return [
+      ...new Set(((data || []) as IdRow[]).map((
+        model: IdRow,
+      ) => model.id)),
+    ];
   }
 
   return [...new Set(modelIds)];
@@ -204,12 +172,27 @@ async function executeAccessorySearch(
   nameTokens: string[],
   compatibilityModelIds: number[],
   year: number | null,
-) {
+  params: ProductCatalogParams,
+): Promise<AccessorySearchResult> {
   const includeCompatibilityJoin = compatibilityModelIds.length > 0;
+  const { productIds, totalCount } = await searchProductIds({
+    productTypeId,
+    nameTokens,
+    modelIds: compatibilityModelIds,
+    modelYear: includeCompatibilityJoin && year !== null
+      ? String(year)
+      : undefined,
+    pagination: params.pagination,
+  });
+
+  if (productIds.length === 0) {
+    return { products: [], totalCount };
+  }
 
   let query: any = supabase
     .from("product")
-    .select(buildAccessoryProductSelect(includeCompatibilityJoin))
+    .select(buildProductCatalogSelect(includeCompatibilityJoin))
+    .in("id", productIds)
     .eq("product_type_id", productTypeId)
     .eq("active", true)
     .order("created_at", { ascending: false });
@@ -220,21 +203,22 @@ async function executeAccessorySearch(
       .in("product_car_model.car_model_id", compatibilityModelIds);
   }
 
-  for (const token of nameTokens) {
-    query = query.ilike("name", `%${token}%`);
-  }
-
   const { data, error } = await query;
 
   if (error) {
     throw new Error(error.message);
   }
 
+  const sortedData = sortProductsByProductIds(
+    (data as any[]) || [],
+    productIds,
+  );
+
   if (!year || !includeCompatibilityJoin) {
-    return data || [];
+    return { products: sortedData, totalCount };
   }
 
-  return (data || [])
+  const filteredProducts = sortedData
     .map((product: any) => ({
       ...product,
       product_car_model: (product.product_car_model || []).filter(
@@ -244,6 +228,8 @@ async function executeAccessorySearch(
       ),
     }))
     .filter((product: any) => product.product_car_model.length > 0);
+
+  return { products: filteredProducts, totalCount };
 }
 
 /**
@@ -258,24 +244,19 @@ async function executeAccessorySearch(
 export async function handleAccessorySearch(
   q: string,
   productTypeId: string,
+  params: ProductCatalogParams = { productTypeId },
 ): Promise<Response> {
   try {
     const trimmedQuery = q.trim();
 
     if (!trimmedQuery) {
-      return new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return buildProductListResponse([], params.pagination, 0);
     }
 
     const { tokens, year } = parseAccessoryQuery(trimmedQuery);
 
     if (tokens.length === 0) {
-      return new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return buildProductListResponse([], params.pagination, 0);
     }
 
     const { modelIds, brandIds, nameTokens } = await findTokenMatchIds(tokens);
@@ -290,36 +271,34 @@ export async function handleAccessorySearch(
       brandIds.length === 0 &&
       nameTokens.length === 0
     ) {
-      return new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return buildProductListResponse([], params.pagination, 0);
     }
 
     if (
       (modelIds.length > 0 || brandIds.length > 0) &&
       compatibilityModelIds.length === 0
     ) {
-      return new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return buildProductListResponse([], params.pagination, 0);
     }
 
-    const searchResults = await executeAccessorySearch(
+    const searchResult = await executeAccessorySearch(
       productTypeId,
       nameTokens,
       compatibilityModelIds,
       year,
+      params,
     );
 
-    const normalizedProducts = normalizeAccessoryProducts(searchResults);
+    const normalizedProducts = normalizeProductCatalogRows(
+      searchResult.products,
+    );
     const camelCaseData = convertToCamelCase(normalizedProducts);
 
-    return new Response(JSON.stringify(camelCaseData), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return buildProductListResponse(
+      camelCaseData as any[],
+      params.pagination,
+      searchResult.totalCount,
+    );
   } catch (err: any) {
     return new Response(
       JSON.stringify({

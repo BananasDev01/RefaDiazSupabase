@@ -7,13 +7,40 @@ import {
   matchesCompatibilityFilters,
   normalizeDirectCompatibility,
 } from "./componentCompatibilityService.ts";
+import { buildProductListResponse } from "./list/responseMapper.ts";
+import {
+  searchProductIds,
+  sortProductsByProductIds,
+} from "./list/searchIdService.ts";
 
 export async function handleGetComponentProductCatalog(
   params: ProductCatalogParams,
 ): Promise<Response> {
+  let productIds: number[];
+  let totalCount = 0;
+
+  try {
+    const searchResult = await searchProductIds({
+      ...params,
+      includeTransitiveCompatibility: true,
+    });
+    productIds = searchResult.productIds;
+    totalCount = searchResult.totalCount;
+  } catch (err: any) {
+    return new Response(
+      JSON.stringify({ error: err.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  if (productIds.length === 0) {
+    return buildProductListResponse([], params.pagination, totalCount);
+  }
+
   let query: any = supabase
     .from("product")
     .select(buildComponentProductSelect())
+    .in("id", productIds)
     .eq("active", true)
     .order("created_at", { ascending: false });
 
@@ -38,11 +65,16 @@ export async function handleGetComponentProductCatalog(
     );
   }
 
-  const transitiveCompatibilitiesByProduct = await loadTransitiveCompatibility(
+  const sortedData = sortProductsByProductIds(
     (data as any[]) || [],
+    productIds,
   );
 
-  const processedData = (data as any[])?.map((product: any) => {
+  const transitiveCompatibilitiesByProduct = await loadTransitiveCompatibility(
+    sortedData,
+  );
+
+  const processedData = sortedData?.map((product: any) => {
     const productCarModels = normalizeDirectCompatibility(product);
     const transitiveProductCarModels =
       transitiveCompatibilitiesByProduct.get(product.id) || [];
@@ -72,8 +104,9 @@ export async function handleGetComponentProductCatalog(
 
   const camelCaseData = convertToCamelCase(cleanedData);
 
-  return new Response(
-    JSON.stringify(camelCaseData),
-    { status: 200, headers: { "Content-Type": "application/json" } },
+  return buildProductListResponse(
+    camelCaseData as any[],
+    params.pagination,
+    totalCount,
   );
 }

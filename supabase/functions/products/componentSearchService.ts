@@ -1,4 +1,5 @@
 import { convertToCamelCase } from "../_shared/utils.ts";
+import { ProductCatalogParams } from "./catalogTypes.ts";
 import { supabase } from "./config.ts";
 import {
   buildComponentProductSelect,
@@ -10,6 +11,11 @@ import {
   findModelAndBrandIds,
   parseSmartQuery,
 } from "./productSearchHelpers.ts";
+import {
+  searchProductIds,
+  sortProductsByProductIds,
+} from "./list/searchIdService.ts";
+import { buildProductListResponse } from "./list/responseMapper.ts";
 
 function matchesSearchCriteria(
   compatibilities: ProductCompatibility[],
@@ -41,6 +47,7 @@ function matchesSearchCriteria(
 export async function handleComponentSmartSearch(
   q: string,
   productTypeId: string,
+  params: ProductCatalogParams = { productTypeId },
 ): Promise<Response> {
   try {
     const { dpis, year, tokens } = parseSmartQuery(q);
@@ -56,25 +63,44 @@ export async function handleComponentSmartSearch(
         throw new Error(error.message);
       }
 
-      const camelCaseData = convertToCamelCase(data);
-      return new Response(JSON.stringify(camelCaseData), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      const rows = (data as any[]) || [];
+      const paginatedRows = params.pagination
+        ? rows.slice(
+          params.pagination.offset,
+          params.pagination.offset + params.pagination.limit,
+        )
+        : rows;
+
+      const camelCaseData = convertToCamelCase(paginatedRows);
+      return buildProductListResponse(
+        camelCaseData as any[],
+        params.pagination,
+        rows.length,
+      );
     }
 
     const { modelIds } = await findModelAndBrandIds(tokens);
 
     if (modelIds.length === 0 && year === null) {
-      return new Response(JSON.stringify([]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return buildProductListResponse([], params.pagination, 0);
+    }
+
+    const { productIds, totalCount } = await searchProductIds({
+      productTypeId,
+      modelIds,
+      modelYear: year !== null ? String(year) : undefined,
+      includeTransitiveCompatibility: true,
+      pagination: params.pagination,
+    });
+
+    if (productIds.length === 0) {
+      return buildProductListResponse([], params.pagination, totalCount);
     }
 
     const { data, error } = await supabase
       .from("product")
       .select(buildComponentProductSelect())
+      .in("id", productIds)
       .eq("product_type_id", productTypeId)
       .eq("active", true)
       .order("created_at", { ascending: false });
@@ -83,11 +109,17 @@ export async function handleComponentSmartSearch(
       throw new Error(error.message);
     }
 
-    const transitiveCompatibilitiesByProduct = await loadTransitiveCompatibility(
+    const sortedData = sortProductsByProductIds(
       (data as any[]) || [],
+      productIds,
     );
 
-    const processedData = (data as any[])?.map((product: any) => {
+    const transitiveCompatibilitiesByProduct =
+      await loadTransitiveCompatibility(
+        sortedData,
+      );
+
+    const processedData = sortedData?.map((product: any) => {
       const productCarModels = normalizeDirectCompatibility(product);
       const transitiveProductCarModels =
         transitiveCompatibilitiesByProduct.get(product.id) || [];
@@ -116,10 +148,11 @@ export async function handleComponentSmartSearch(
 
     const camelCaseData = convertToCamelCase(cleanedData);
 
-    return new Response(JSON.stringify(camelCaseData), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return buildProductListResponse(
+      camelCaseData as any[],
+      params.pagination,
+      totalCount,
+    );
   } catch (err: any) {
     return new Response(
       JSON.stringify({

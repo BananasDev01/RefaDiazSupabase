@@ -2,46 +2,15 @@ import { convertToCamelCase } from "../_shared/utils.ts";
 import { supabase } from "./config.ts";
 import { ProductCatalogParams } from "./catalogTypes.ts";
 import { buildProductQuery } from "./productFilterService.ts";
-
-function buildProductSelect(includeCompatibilityJoin: boolean): string {
-  const compatibilityRelation = includeCompatibilityJoin
-    ? `product_car_model!inner(
-          car_model_id,
-          initial_year,
-          last_year,
-          active,
-          car_model!inner(
-            id,
-            name,
-            brand!inner(id, name)
-          )
-        )`
-    : `product_car_model(
-          car_model_id,
-          initial_year,
-          last_year,
-          active,
-          car_model(
-            id,
-            name,
-            brand(id, name)
-          )
-        )`;
-
-  return `
-    *,
-    product_type(id, name),
-    product_category:product_category_id(
-      id,
-      name,
-      description,
-      product_type_id,
-      order_id,
-      active
-    ),
-    ${compatibilityRelation}
-  `;
-}
+import {
+  buildProductCatalogSelect,
+  buildProductListResponse,
+  normalizeProductCatalogRows,
+} from "./list/responseMapper.ts";
+import {
+  searchProductIds,
+  sortProductsByProductIds,
+} from "./list/searchIdService.ts";
 
 export async function handleGetStandardProductCatalog(
   params: ProductCatalogParams,
@@ -50,9 +19,28 @@ export async function handleGetStandardProductCatalog(
     params.brandId || params.modelId || params.modelYear,
   );
 
+  let productIds: number[];
+  let totalCount = 0;
+
+  try {
+    const searchResult = await searchProductIds(params);
+    productIds = searchResult.productIds;
+    totalCount = searchResult.totalCount;
+  } catch (err: any) {
+    return new Response(
+      JSON.stringify({ error: err.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  if (productIds.length === 0) {
+    return buildProductListResponse([], params.pagination, totalCount);
+  }
+
   let query: any = supabase
     .from("product")
-    .select(buildProductSelect(hasCompatibilityFilters))
+    .select(buildProductCatalogSelect(hasCompatibilityFilters))
+    .in("id", productIds)
     .eq("active", true)
     .order("created_at", { ascending: false });
 
@@ -86,29 +74,16 @@ export async function handleGetStandardProductCatalog(
     );
   }
 
-  const processedData = (data as any[])?.map((product: any) => ({
-    ...product,
-    productCarModels: product.product_car_model
-      ?.map((pcm: any) => ({
-        carModelId: pcm.car_model_id,
-        initialYear: pcm.initial_year,
-        lastYear: pcm.last_year,
-        active: pcm.active,
-        carModel: pcm.car_model,
-      }))
-      .filter((pcm: any) => pcm.active) || [],
-    productCategory: product.product_category || null,
-  }));
-
-  const cleanedData = processedData?.map((product: any) => {
-    const { product_car_model, ...rest } = product;
-    return rest;
-  });
-
+  const sortedData = sortProductsByProductIds(
+    (data as any[]) || [],
+    productIds,
+  );
+  const cleanedData = normalizeProductCatalogRows(sortedData);
   const camelCaseData = convertToCamelCase(cleanedData);
 
-  return new Response(
-    JSON.stringify(camelCaseData),
-    { status: 200, headers: { "Content-Type": "application/json" } },
+  return buildProductListResponse(
+    camelCaseData as any[],
+    params.pagination,
+    totalCount,
   );
 }

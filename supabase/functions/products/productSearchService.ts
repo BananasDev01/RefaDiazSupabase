@@ -1,10 +1,21 @@
 import { supabase } from "./config.ts";
 import { convertToCamelCase } from "../_shared/utils.ts";
+import { ProductCatalogParams } from "./catalogTypes.ts";
 import {
   findModelAndBrandIds,
   FoundIds,
   parseSmartQuery,
 } from "./productSearchHelpers.ts";
+import {
+  searchProductIds,
+  sortProductsByProductIds,
+} from "./list/searchIdService.ts";
+import { buildProductListResponse } from "./list/responseMapper.ts";
+
+interface SmartSearchResult {
+  products: any[];
+  totalCount: number;
+}
 
 /**
  * Construye y ejecuta la consulta de búsqueda dinámica basada en los IDs y el año.
@@ -18,9 +29,22 @@ async function executeDynamicSearch(
   productTypeId: string,
   { modelIds }: FoundIds, // Ya no necesitamos brandIds aquí
   year: number | null,
-) {
-  console.log("search", modelIds, year);
-  if ((modelIds.length == 0) && !year) return [];
+  params: ProductCatalogParams,
+): Promise<SmartSearchResult> {
+  if ((modelIds.length == 0) && !year) {
+    return { products: [], totalCount: 0 };
+  }
+
+  const { productIds, totalCount } = await searchProductIds({
+    productTypeId,
+    modelIds,
+    modelYear: year !== null ? String(year) : undefined,
+    pagination: params.pagination,
+  });
+
+  if (productIds.length === 0) {
+    return { products: [], totalCount };
+  }
 
   let query = supabase
     .from("product")
@@ -38,6 +62,7 @@ async function executeDynamicSearch(
         )
       )
     `)
+    .in("id", productIds)
     .eq("product_type_id", productTypeId)
     .eq("active", true)
     .eq("product_car_model.active", true);
@@ -68,7 +93,10 @@ async function executeDynamicSearch(
     throw new Error(error.message);
   }
 
-  return data;
+  return {
+    products: sortProductsByProductIds((data as any[]) || [], productIds),
+    totalCount,
+  };
 }
 
 /**
@@ -80,6 +108,7 @@ async function executeDynamicSearch(
 export async function handleSmartSearch(
   q: string,
   productTypeId: string,
+  params: ProductCatalogParams = { productTypeId },
 ): Promise<Response> {
   try {
     const { dpis, year, tokens } = parseSmartQuery(q);
@@ -94,23 +123,39 @@ export async function handleSmartSearch(
 
       if (error) throw new Error(error.message);
 
-      const camelCaseData = convertToCamelCase(data);
-      return new Response(JSON.stringify(camelCaseData), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      const rows = (data as any[]) || [];
+      const paginatedRows = params.pagination
+        ? rows.slice(
+          params.pagination.offset,
+          params.pagination.offset + params.pagination.limit,
+        )
+        : rows;
+
+      const camelCaseData = convertToCamelCase(paginatedRows);
+      return buildProductListResponse(
+        camelCaseData as any[],
+        params.pagination,
+        rows.length,
+      );
     }
 
     // Caso 2: Búsqueda jerárquica por tokens y año
     const { modelIds, brandIds } = await findModelAndBrandIds(tokens);
 
-    const searchResults = await executeDynamicSearch(productTypeId, {
-      modelIds,
-      brandIds,
-    }, year);
+    const searchResult = await executeDynamicSearch(
+      productTypeId,
+      {
+        modelIds,
+        brandIds,
+      },
+      year,
+      params,
+    );
 
     // Procesar y limpiar los datos como en la función original
-    const processedData = searchResults?.map((product) => ({
+    const processedData = (searchResult.products as any[])?.map((
+      product: any,
+    ) => ({
       ...product,
       productCarModels: product.product_car_model?.map((pcm: any) => ({
         carModelId: pcm.car_model_id,
@@ -120,17 +165,18 @@ export async function handleSmartSearch(
       })) || [],
     }));
 
-    const cleanedData = processedData?.map((product) => {
+    const cleanedData = processedData?.map((product: any) => {
       const { product_car_model, ...rest } = product;
       return rest;
     });
 
     const camelCaseData = convertToCamelCase(cleanedData);
 
-    return new Response(JSON.stringify(camelCaseData), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return buildProductListResponse(
+      camelCaseData as any[],
+      params.pagination,
+      searchResult.totalCount,
+    );
   } catch (err: any) {
     return new Response(
       JSON.stringify({

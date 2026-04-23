@@ -1,7 +1,5 @@
 import { supabase } from "./config.ts";
 
-const TRANSITIVE_COMPATIBILITY_PRODUCT_TYPES = new Set(["tapa", "abanico"]);
-
 export interface ProductTypeSummary {
   id: number;
   name: string;
@@ -22,12 +20,4 @@ export async function getActiveProductTypeById(
   }
 
   return data;
-}
-
-export function usesTransitiveCompatibilityCatalog(
-  productType: ProductTypeSummary | null,
-): boolean {
-  return TRANSITIVE_COMPATIBILITY_PRODUCT_TYPES.has(
-    productType?.name?.toLowerCase() || "",
-  );
 }

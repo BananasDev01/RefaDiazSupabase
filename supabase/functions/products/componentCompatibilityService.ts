@@ -16,6 +16,25 @@ export type ProductCompatibility = {
   } | null;
 };
 
+type ProductComponentRelation = {
+  product_id: number;
+  component_product_id: number;
+  active: boolean;
+};
+
+type ProductIdRow = {
+  id: number;
+};
+
+type ProductCarModelRow = {
+  product_id: number;
+  car_model_id: number;
+  initial_year: number | null;
+  last_year: number | null;
+  active: boolean;
+  car_model: any;
+};
+
 export function buildComponentProductSelect(): string {
   return `
     *,
@@ -108,7 +127,9 @@ export function matchesCompatibilityFilters(
         return false;
       }
 
-      if (compatibility.lastYear !== null && parsedYear > compatibility.lastYear) {
+      if (
+        compatibility.lastYear !== null && parsedYear > compatibility.lastYear
+      ) {
         return false;
       }
     }
@@ -137,35 +158,42 @@ export async function loadTransitiveCompatibility(
     throw new Error(componentRelationsError.message);
   }
 
-  const activeRelations = (componentRelations || []).filter((relation) =>
-    relation.active
-  );
+  const activeRelations =
+    ((componentRelations || []) as ProductComponentRelation[])
+      .filter((relation: ProductComponentRelation) => relation.active);
 
   if (activeRelations.length === 0) {
     return new Map();
   }
 
-  const parentProductIds = [...new Set(
-    activeRelations.map((relation) => relation.product_id),
-  )];
+  const parentProductIds = [
+    ...new Set(
+      activeRelations.map((relation: ProductComponentRelation) =>
+        relation.product_id
+      ),
+    ),
+  ];
 
-  const { data: activeParentProducts, error: activeParentsError } = await supabase
-    .from("product")
-    .select("id")
-    .in("id", parentProductIds)
-    .eq("active", true);
+  const { data: activeParentProducts, error: activeParentsError } =
+    await supabase
+      .from("product")
+      .select("id")
+      .in("id", parentProductIds)
+      .eq("active", true);
 
   if (activeParentsError) {
     throw new Error(activeParentsError.message);
   }
 
   const activeParentIds = new Set(
-    (activeParentProducts || []).map((product) => product.id),
+    ((activeParentProducts || []) as ProductIdRow[]).map((
+      product: ProductIdRow,
+    ) => product.id),
   );
 
-  const filteredRelations = activeRelations.filter((relation) =>
-    activeParentIds.has(relation.product_id)
-  );
+  const filteredRelations = activeRelations.filter((
+    relation: ProductComponentRelation,
+  ) => activeParentIds.has(relation.product_id));
 
   if (filteredRelations.length === 0) {
     return new Map();
@@ -188,7 +216,13 @@ export async function loadTransitiveCompatibility(
       `)
       .in(
         "product_id",
-        [...new Set(filteredRelations.map((relation) => relation.product_id))],
+        [
+          ...new Set(
+            filteredRelations.map((relation: ProductComponentRelation) =>
+              relation.product_id
+            ),
+          ),
+        ],
       )
       .eq("active", true);
 
@@ -198,7 +232,10 @@ export async function loadTransitiveCompatibility(
 
   const compatibilitiesByParent = new Map<number, ProductCompatibility[]>();
 
-  for (const compatibility of parentCompatibilities || []) {
+  for (
+    const compatibility
+      of ((parentCompatibilities || []) as ProductCarModelRow[])
+  ) {
     const normalizedCompatibility: ProductCompatibility = {
       carModelId: compatibility.car_model_id,
       initialYear: compatibility.initial_year,
@@ -226,7 +263,8 @@ export async function loadTransitiveCompatibility(
     const parentCompatibilitiesForRelation =
       compatibilitiesByParent.get(relation.product_id) || [];
     const existingCompatibilities =
-      transitiveCompatibilitiesByProduct.get(relation.component_product_id) || [];
+      transitiveCompatibilitiesByProduct.get(relation.component_product_id) ||
+      [];
     const dedupeKeys = new Set(
       existingCompatibilities.map((compatibility) =>
         `${compatibility.carModelId}:${compatibility.initialYear}:${compatibility.lastYear}`

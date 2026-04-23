@@ -1,3 +1,6 @@
 {
-  "imports": {}
+  "imports": {},
+  "tasks": {
+    "test": "SUPABASE_TEST_MODE=true deno test --allow-env"
+  }
 }

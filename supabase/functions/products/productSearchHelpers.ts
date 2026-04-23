@@ -11,6 +11,10 @@ export interface FoundIds {
   brandIds: number[];
 }
 
+interface IdRow {
+  id: number;
+}
+
 export function parseSmartQuery(query: string): ParsedQuery {
   const dpiRegex = /\b(DPI\d+)\b/gi;
   const yearRegex = /\b(\d{4})\b/g;
@@ -44,7 +48,9 @@ export async function findModelAndBrandIds(
       .eq("active", true);
 
     if (modelData && modelData.length > 0) {
-      modelIdsFromTokens.push(...modelData.map((model) => model.id));
+      modelIdsFromTokens.push(
+        ...(modelData as IdRow[]).map((model: IdRow) => model.id),
+      );
     }
 
     const { data: brandData } = await supabase
@@ -54,7 +60,9 @@ export async function findModelAndBrandIds(
       .eq("active", true);
 
     if (brandData && brandData.length > 0) {
-      brandIdsFromTokens.push(...brandData.map((brand) => brand.id));
+      brandIdsFromTokens.push(
+        ...(brandData as IdRow[]).map((brand: IdRow) => brand.id),
+      );
     }
   }
 
@@ -70,7 +78,7 @@ export async function findModelAndBrandIds(
       .in("brand_id", brandIdsFromTokens);
 
     const finalModelIds = filteredModelData
-      ? filteredModelData.map((model) => model.id)
+      ? (filteredModelData as IdRow[]).map((model: IdRow) => model.id)
       : [];
 
     return { modelIds: [...new Set(finalModelIds)], brandIds: [] };
@@ -83,7 +91,7 @@ export async function findModelAndBrandIds(
       .in("brand_id", brandIdsFromTokens);
 
     const finalModelIds = modelsOfBrands
-      ? modelsOfBrands.map((model) => model.id)
+      ? (modelsOfBrands as IdRow[]).map((model: IdRow) => model.id)
       : [];
 
     return { modelIds: [...new Set(finalModelIds)], brandIds: [] };
