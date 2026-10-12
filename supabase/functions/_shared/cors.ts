@@ -1,6 +1,6 @@
 export const corsHeaders = {
     'Access-Control-Allow-Origin': '*', // Cambia '*' por un dominio específico si prefieres restringirlo
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Authorization, Content-Type, x-client-info, apikey',
   };
   

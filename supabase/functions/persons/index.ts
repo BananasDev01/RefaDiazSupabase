@@ -5,6 +5,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { serveWithCors } from "../_shared/server.ts";
 import { convertToCamelCase, convertToSnakeCase } from "../_shared/utils.ts";
+import { requireAppRole } from "../_shared/auth.ts";
 
 // Obtén las variables de entorno necesarias para la conexión
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -176,6 +177,12 @@ async function handleDeletePerson(req: Request): Promise<Response> {
 
 // Función principal que enruta la petición según el método HTTP
 serveWithCors(async (req: Request) => {
+  const allowedRoles = req.method === "GET"
+    ? ["ADMINISTRADOR", "EMPLEADO"] as const
+    : ["ADMINISTRADOR"] as const;
+  const authorization = await requireAppRole(req, supabase, allowedRoles);
+  if (authorization instanceof Response) return authorization;
+
   switch (req.method) {
     case "GET":
       return await handleGetPersons(req);

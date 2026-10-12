@@ -1,0 +1,2093 @@
+openapi: 3.1.0
+info:
+  title: RefaDiaz Operations API
+  version: 1.0.0
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+  summary: Clientes, vehículos, servicios y cotizaciones de RefaDiaz
+  description: |
+    Contrato de las Edge Functions operativas de RefaDiaz.
+
+    Todas las solicitudes y respuestas de aplicación usan camelCase. Las
+    escrituras agregadas son transaccionales. Los UUID `externalId` los genera
+    el dispositivo y funcionan como identidad offline y llave de idempotencia.
+    `expectedVersion` se usa por separado para control optimista de concurrencia.
+
+    El IVA es un importe manual. En cotizaciones, el servidor calcula cada
+    `lineTotal`, el `subtotal` y el `total` de cada opción. Las alternativas
+    mutuamente excluyentes nunca se suman entre sí.
+servers:
+  - url: "{supabaseUrl}/functions/v1"
+    description: Proyecto Supabase seleccionado
+    variables:
+      supabaseUrl:
+        default: http://127.0.0.1:54321
+        description: URL base local o remota del proyecto Supabase
+security:
+  - bearerAuth: []
+    apiKey: []
+tags:
+  - name: Clients
+    description: Clientes, conciliación por teléfono y sus vehículos
+  - name: Services
+    description: Servicios del taller y selección de fallas
+  - name: Quotations
+    description: Cotizaciones, alternativas, duplicado y conversión a servicio
+paths:
+  /service-documents:
+    get:
+      operationId: listSignedServiceDocuments
+      summary: Documentos firmados de una orden; solo personal autorizado
+      parameters:
+        - in: query
+          name: serviceExternalId
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Documentos inmutables, sin URL pública
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/SignedServiceDocument'}
+  /service-documents/sessions:
+    post:
+      operationId: createServiceUploadSession
+      summary: Autoriza una carga para la versión guardada durante 15 minutos
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serviceExternalId, expectedVersion]
+              properties:
+                serviceExternalId: {type: string, format: uuid}
+                expectedVersion: {type: integer, minimum: 1}
+      responses:
+        '201':
+          description: Capacidad de carga; no da acceso de lectura al expediente
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServiceUploadSession'}
+  /service-documents/session:
+    post:
+      operationId: inspectServiceUploadSession
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: {type: string, pattern: '^[a-f0-9]{64}$'}
+      responses:
+        '200':
+          description: Datos mínimos de la carga, sin información personal
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServiceUploadInfo'}
+        '410': {description: Enlace vencido o revocado}
+  /service-documents/upload:
+    post:
+      operationId: uploadSignedServiceDocument
+      security: []
+      description: Token de carga de un uso. JPG, PNG o PDF hasta 10 MB. Se valida contenido y se congela la asociación a la versión autorizada. Reintento con idéntico archivo es idempotente.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [token, file]
+              properties:
+                token: {type: string}
+                file: {type: string, format: binary}
+      responses:
+        '201': {description: Documento asociado}
+        '200': {description: Carga ya completada}
+        '400': {description: Archivo o enlace inválido}
+        '409': {description: Carga concurrente o enlace ya utilizado}
+        '503': {description: Error recuperable; reintentar con el mismo archivo}
+  /service-documents/sessions/{sessionId}/revoke:
+    post:
+      operationId: revokeServiceUploadSession
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Capacidad revocada; no borra documentos}
+  /service-documents/{documentId}/url:
+    get:
+      operationId: getSignedServiceDocumentUrl
+      parameters:
+        - in: path
+          name: documentId
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Enlace de lectura autorizado, válido por 5 minutos
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, mimeType]
+                properties:
+                  url: {type: string}
+                  mimeType: {type: string}
+  /clients:
+    get:
+      tags: [Clients]
+      operationId: searchClients
+      summary: Buscar y listar clientes
+      description: |
+        Busca por nombre, teléfono, marca, modelo, año o placa. `phone` se
+        compara por su representación normalizada. Si `limit` supera 100, el
+        servidor lo limita a 100.
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/CarModelIdQuery"
+        - $ref: "#/components/parameters/ModelYearQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/OffsetQuery"
+      responses:
+        "200":
+          description: Página de clientes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [Clients]
+      operationId: createOrReconcileClient
+      summary: Crear o conciliar un cliente con sus vehículos
+      description: |
+        Crea un cliente o lo concilia con el registro remoto que tenga el mismo
+        teléfono normalizado. La conciliación conserva el nombre y teléfono
+        remotos y agrega vehículos nuevos. Repetir el mismo `externalId` no
+        duplica cliente, vehículos ni relaciones.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientCreateRequest"
+            example:
+              externalId: 0f76c0c1-fd87-4d86-901f-77349068b0ea
+              clientName: Ana Pérez
+              phoneNumber: 81 1234 5678
+              comments: Cliente frecuente
+              vehicles:
+                - externalId: bd8b83c8-b38e-4b37-9ad9-2b80c46f7767
+                  carModelId: 25
+                  modelYear: 2019
+                  version: Advance
+                  color: Gris
+                  plate: ABC-123
+                  comments: Vehículo principal
+      responses:
+        "200":
+          description: Reintento idempotente o conciliación por teléfono
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientResponse"
+        "201":
+          description: Cliente creado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /clients/{clientId}:
+    patch:
+      tags: [Clients]
+      operationId: updateClientContact
+      summary: Actualizar o quitar el segundo teléfono sin cambiar el celular principal
+      parameters:
+        - $ref: "#/components/parameters/ClientIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientContactUpdateRequest"
+      responses:
+        "200":
+          description: Contacto actualizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      tags: [Clients]
+      operationId: getClient
+      summary: Obtener un cliente con todos sus vehículos
+      parameters:
+        - $ref: "#/components/parameters/ClientIdPath"
+      responses:
+        "200":
+          description: Detalle del cliente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /clients/{clientId}/vehicles:
+    post:
+      tags: [Clients]
+      operationId: addClientVehicles
+      summary: Agregar uno o varios vehículos a un cliente
+      description: La asociación completa se guarda atómicamente.
+      parameters:
+        - $ref: "#/components/parameters/ClientIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddClientVehiclesRequest"
+            examples:
+              oneVehicle:
+                summary: Un vehículo
+                value:
+                  vehicle:
+                    externalId: bd8b83c8-b38e-4b37-9ad9-2b80c46f7767
+                    carModelId: 25
+                    modelYear: 2019
+                    color: Gris
+                    plate: ABC-123
+              severalVehicles:
+                summary: Varios vehículos
+                value:
+                  vehicles:
+                    - externalId: bd8b83c8-b38e-4b37-9ad9-2b80c46f7767
+                      carModelId: 25
+                      modelYear: 2019
+                    - externalId: 424a483d-e0d4-4f13-a4d0-57ec3e34a41f
+                      carModelId: 30
+                      modelYear: 2022
+      responses:
+        "200":
+          description: Cliente actualizado con su colección de vehículos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /services:
+    get:
+      tags: [Services]
+      operationId: searchServices
+      summary: Buscar y listar servicios
+      parameters:
+        - $ref: "#/components/parameters/FolioQuery"
+        - $ref: "#/components/parameters/DateFromQuery"
+        - $ref: "#/components/parameters/DateToQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/PlateQuery"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/ServiceStatus"
+        - $ref: "#/components/parameters/ClientIdQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/OffsetQuery"
+      responses:
+        "200":
+          description: Página de servicios
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [Services]
+      operationId: createService
+      summary: Crear un servicio completo
+      description: |
+        La creación, selección de fallas, notas internas y asignación del folio
+        oficial `SER-*` se realizan en una transacción. `taxAmount` es manual y
+        obligatorio. El servidor calcula `total = (subtotal o 0) + taxAmount`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceCreateRequest"
+            example:
+              externalId: 3c8db8a0-027f-473c-94b8-8f67f7f05821
+              provisionalReference: PEND-SER-F8A21C
+              clientVehicleId: 42
+              serviceDate: "2026-08-20"
+              reportedFailureSummary: El automóvil se calienta
+              authorizedWorkDescription: Servicio de radiador autorizado
+              vehicleOperationObservations: La temperatura sube en tráfico
+              importantInformation: Revisar nuevamente en una semana
+              compressionLeakDetected: false
+              coolingSystemAirPressureDetected: true
+              radiatorSerialNumber: "225557"
+              radiatorObstructionLevel: 8
+              subtotal: 1000
+              taxAmount: 160
+              warrantyMonths: 6
+              reportedFailures:
+                - externalId: 113bbadc-8ee0-4101-b45a-f23847cc4e21
+                  reportedFailureTypeId: 1
+              internalNotes:
+                - externalId: 1ef1bc88-5440-40dd-893b-d05ef36be369
+                  note: Nota exclusiva del taller
+      responses:
+        "200":
+          description: Reintento idempotente; devuelve el servicio existente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceResponse"
+        "201":
+          description: Servicio creado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /services/failure-types:
+    get:
+      tags: [Services]
+      operationId: listReportedFailureTypes
+      summary: Listar las casillas vigentes del formato de servicio
+      responses:
+        "200":
+          description: Catálogo ordenado de fallas o trabajos reportados
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReportedFailureType"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /services/{serviceExternalId}:
+    get:
+      tags: [Services]
+      operationId: getService
+      summary: Obtener un servicio por externalId
+      parameters:
+        - $ref: "#/components/parameters/ServiceExternalIdPath"
+      responses:
+        "200":
+          description: Detalle público del servicio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [Services]
+      operationId: updateService
+      summary: Editar un servicio con control optimista
+      description: |
+        Reemplaza los campos mutables y la selección de fallas. Los servicios
+        `COMPLETED` siguen siendo editables y conservan su estado; los
+        `CANCELLED` no admiten cambios. Las notas internas se
+        aceptan en escritura pero nunca aparecen en respuestas públicas.
+      parameters:
+        - $ref: "#/components/parameters/ServiceExternalIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceUpdateRequest"
+      responses:
+        "200":
+          description: Servicio actualizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /services/{serviceExternalId}/complete:
+    post:
+      tags: [Services]
+      operationId: completeService
+      summary: Finalizar un servicio
+      parameters:
+        - $ref: "#/components/parameters/ServiceExternalIdPath"
+      requestBody:
+        $ref: "#/components/requestBodies/VersionTransition"
+      responses:
+        "200":
+          description: Servicio finalizado o reintento idempotente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /services/{serviceExternalId}/start:
+    post:
+      tags: [Services]
+      operationId: startService
+      summary: Iniciar un servicio guardado como borrador
+      description: Cambia una orden `DRAFT` a `IN_PROGRESS` con control optimista.
+      parameters:
+        - $ref: "#/components/parameters/ServiceExternalIdPath"
+      requestBody:
+        $ref: "#/components/requestBodies/VersionTransition"
+      responses:
+        "200":
+          description: Servicio iniciado o reintento idempotente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /services/{serviceExternalId}/cancel:
+    post:
+      tags: [Services]
+      operationId: cancelService
+      summary: Cancelar un servicio
+      parameters:
+        - $ref: "#/components/parameters/ServiceExternalIdPath"
+      requestBody:
+        $ref: "#/components/requestBodies/VersionTransition"
+      responses:
+        "200":
+          description: Servicio cancelado o reintento idempotente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /quotations:
+    get:
+      tags: [Quotations]
+      operationId: searchQuotations
+      summary: Buscar y listar cotizaciones
+      parameters:
+        - $ref: "#/components/parameters/FolioQuery"
+        - $ref: "#/components/parameters/ClientIdQuery"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/QuotationStatus"
+        - $ref: "#/components/parameters/DateFromQuery"
+        - $ref: "#/components/parameters/DateToQuery"
+        - $ref: "#/components/parameters/PhoneQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/OffsetQuery"
+      responses:
+        "200":
+          description: Página de cotizaciones
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotationListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [Quotations]
+      operationId: createQuotation
+      summary: Crear una cotización con todas sus alternativas
+      description: |
+        Guarda encabezado, opciones y conceptos en una transacción. Cada opción
+        requiere IVA manual, incluso cuando es `0`. PostgreSQL calcula importes
+        de línea, subtotal y total y asigna el folio oficial `COT-*`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuotationCreateRequest"
+            example:
+              externalId: f49d9ad4-3dbb-44b6-963f-e94b7360d42d
+              provisionalReference: PEND-COT-F49D9AD4
+              quotationDate: "2026-08-20"
+              validUntil: "2026-09-20"
+              clientVehicleId: 42
+              attendedByUserId: auth-user-id
+              notes: Alternativas presentadas al cliente
+              options:
+                - externalId: 4efab75c-61ad-444c-b98c-b27961028748
+                  name: Radiador nuevo
+                  taxAmount: 400
+                  warrantyMonths: 6
+                  items:
+                    - externalId: 177eeefc-c5f1-46a6-81fc-c10db46e02ae
+                      description: Radiador nuevo
+                      quantity: 1
+                      unitPrice: 2500
+                      warrantyMonths: 6
+                    - externalId: b32fb14f-6273-4f06-bb13-104934c52bf8
+                      description: Instalación
+                      quantity: 1
+                      unitPrice: 500
+                - externalId: 631a3e74-66fd-48ca-bbf9-9ce286061d0c
+                  name: Radiador reconstruido
+                  taxAmount: 288
+                  items:
+                    - externalId: d9be3b01-1c2d-450e-b6fc-90921131f2ce
+                      description: Radiador reconstruido
+                      quantity: 1
+                      unitPrice: 1800
+      responses:
+        "200":
+          description: Reintento idempotente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotationResponse"
+        "201":
+          description: Cotización creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /quotations/{quotationExternalId}:
+    get:
+      tags: [Quotations]
+      operationId: getQuotation
+      summary: Obtener una cotización por externalId
+      parameters:
+        - $ref: "#/components/parameters/QuotationExternalIdPath"
+      responses:
+        "200":
+          description: Cotización con opciones y conceptos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [Quotations]
+      operationId: updateQuotation
+      summary: Editar una cotización con control optimista
+      description: Reemplaza atómicamente las opciones y conceptos actuales.
+      parameters:
+        - $ref: "#/components/parameters/QuotationExternalIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuotationUpdateRequest"
+      responses:
+        "200":
+          description: Cotización actualizada y totales recalculados
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /quotations/{quotationExternalId}/send:
+    post:
+      tags: [Quotations]
+      operationId: sendQuotation
+      summary: Marcar una cotización vigente como enviada
+      parameters:
+        - $ref: "#/components/parameters/QuotationExternalIdPath"
+      requestBody:
+        $ref: "#/components/requestBodies/VersionTransition"
+      responses:
+        "200":
+          $ref: "#/components/responses/QuotationMutation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /quotations/{quotationExternalId}/cancel:
+    post:
+      tags: [Quotations]
+      operationId: cancelQuotation
+      summary: Cancelar una cotización
+      parameters:
+        - $ref: "#/components/parameters/QuotationExternalIdPath"
+      requestBody:
+        $ref: "#/components/requestBodies/VersionTransition"
+      responses:
+        "200":
+          $ref: "#/components/responses/QuotationMutation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /quotations/{quotationExternalId}/reactivate:
+    post:
+      tags: [Quotations]
+      operationId: reactivateQuotation
+      summary: Reactivar explícitamente una cotización vencida
+      description: El nuevo `validUntil` no puede estar vencido.
+      parameters:
+        - $ref: "#/components/parameters/QuotationExternalIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuotationReactivateRequest"
+            example:
+              expectedVersion: 2
+              validUntil: "2026-10-20"
+      responses:
+        "200":
+          $ref: "#/components/responses/QuotationMutation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /quotations/{quotationExternalId}/duplicate:
+    post:
+      tags: [Quotations]
+      operationId: duplicateQuotation
+      summary: Duplicar una cotización como un nuevo borrador
+      description: |
+        El frontend genera un nuevo `externalId`. La copia recibe su propio
+        folio `COT-*` y conserva alternativas, descripciones y precios.
+      parameters:
+        - $ref: "#/components/parameters/QuotationExternalIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuotationDuplicateRequest"
+      responses:
+        "200":
+          description: Reintento idempotente del duplicado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotationResponse"
+        "201":
+          description: Nueva cotización creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /quotations/{quotationExternalId}/convert:
+    post:
+      tags: [Quotations]
+      operationId: convertQuotationToService
+      summary: Aceptar una opción y convertirla en servicio
+      description: |
+        Operación atómica. Acepta exactamente una opción, crea como máximo un
+        servicio con folio `SER-*`, copia sus conceptos a `service_item` y
+        vincula ambos documentos. Una cotización vencida debe reactivarse antes.
+      parameters:
+        - $ref: "#/components/parameters/QuotationExternalIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuotationConversionRequest"
+            example:
+              optionExternalId: 4efab75c-61ad-444c-b98c-b27961028748
+              serviceExternalId: 7107b99c-0b05-49d4-bd0b-d36857665b89
+              serviceProvisionalReference: PEND-SER-7107B99C
+              serviceDate: "2026-08-20"
+              expectedVersion: 3
+      responses:
+        "200":
+          description: Reintento de la misma conversión
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotationConversionResponse"
+        "201":
+          description: Conversión creada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotationConversionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/ServerError"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT de Supabase Auth para un usuario activo de la aplicación
+    apiKey:
+      type: apiKey
+      in: header
+      name: apikey
+      description: Clave pública/anon del proyecto Supabase
+  parameters:
+    ClientIdPath:
+      name: clientId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    ClientIdQuery:
+      name: clientId
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+    ServiceExternalIdPath:
+      name: serviceExternalId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    QuotationExternalIdPath:
+      name: quotationExternalId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SearchQuery:
+      name: q
+      in: query
+      description: Búsqueda libre por cliente, teléfono, placa, marca, modelo o año
+      schema:
+        type: string
+    PhoneQuery:
+      name: phone
+      in: query
+      description: Teléfono que el servidor normaliza antes de comparar
+      schema:
+        type: string
+    PlateQuery:
+      name: plate
+      in: query
+      description: Placa normalizada por el servidor
+      schema:
+        type: string
+    FolioQuery:
+      name: folio
+      in: query
+      description: Folio oficial o referencia provisional, admite coincidencia parcial
+      schema:
+        type: string
+    CarModelIdQuery:
+      name: carModelId
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+    ModelYearQuery:
+      name: modelYear
+      in: query
+      schema:
+        type: integer
+        minimum: 1886
+        maximum: 2100
+    DateFromQuery:
+      name: dateFrom
+      in: query
+      schema:
+        type: string
+        format: date
+    DateToQuery:
+      name: dateTo
+      in: query
+      schema:
+        type: string
+        format: date
+    LimitQuery:
+      name: limit
+      in: query
+      description: Predeterminado 50; el servidor limita valores mayores a 100
+      schema:
+        type: integer
+        minimum: 1
+        default: 50
+    OffsetQuery:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+  requestBodies:
+    VersionTransition:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VersionTransitionRequest"
+          example:
+            expectedVersion: 2
+  responses:
+    BadRequest:
+      description: Payload, filtros o formato inválidos
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/ErrorResponse"
+              - $ref: "#/components/schemas/ValidationErrorResponse"
+    Unauthorized:
+      description: JWT ausente, inválido o expirado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AuthErrorResponse"
+          example:
+            error: Falta un token Bearer válido
+    Forbidden:
+      description: Usuario inactivo o rol no permitido
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AuthErrorResponse"
+    NotFound:
+      description: Recurso inexistente
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Conflicto de identidad offline, versión o conversión
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: QUOTATION_VERSION_CONFLICT
+            error: QUOTATION_VERSION_CONFLICT current=3 expected=2
+    UnprocessableEntity:
+      description: Relación o transición de estado inválida
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServerError:
+      description: Error interno no expuesto
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: DATABASE_ERROR
+            error: Error al procesar la solicitud
+    QuotationMutation:
+      description: Cotización actualizada o reintento idempotente
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/QuotationResponse"
+  schemas:
+    SignedServiceDocument:
+      type: object
+      required: [externalId, serviceVersion, folioSnapshot, mimeType, byteSize, createdAt, documentVersion]
+      properties:
+        externalId: {type: string, format: uuid}
+        serviceVersion: {type: integer}
+        folioSnapshot: {type: string}
+        mimeType: {type: string, enum: [image/jpeg, image/png, application/pdf]}
+        byteSize: {type: integer}
+        createdAt: {type: string, format: date-time}
+        documentVersion: {type: integer}
+    ServiceUploadSession:
+      type: object
+      required: [id, token, expiresAt, serviceVersion]
+      properties:
+        id: {type: string, format: uuid}
+        token: {type: string}
+        expiresAt: {type: string, format: date-time}
+        serviceVersion: {type: integer}
+    ServiceUploadInfo:
+      type: object
+      required: [expiresAt, status, serviceVersion, folio]
+      properties:
+        expiresAt: {type: string, format: date-time}
+        status: {type: string, enum: [READY, UPLOADING, COMPLETED, REVOKED]}
+        serviceVersion: {type: integer}
+        folio: {type: string}
+    ErrorResponse:
+      type: object
+      required: [code, error]
+      properties:
+        code:
+          type: string
+        error:
+          type: string
+      additionalProperties: false
+    AuthErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+      additionalProperties: false
+    ValidationError:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+      additionalProperties: false
+    ValidationErrorResponse:
+      type: object
+      required: [code, error, details]
+      properties:
+        code:
+          const: VALIDATION_ERROR
+        error:
+          type: string
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationError"
+      additionalProperties: false
+    Pagination:
+      type: object
+      required: [limit, offset, total]
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+        offset:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    Money:
+      type: number
+      minimum: 0
+      maximum: 9999999999.99
+      multipleOf: 0.01
+      description: Importe con semántica PostgreSQL numeric(12,2)
+    NullableString:
+      type: [string, "null"]
+    NullableInteger:
+      type: [integer, "null"]
+    NullableDate:
+      type: [string, "null"]
+      format: date
+    NullableDateTime:
+      type: [string, "null"]
+      format: date-time
+    NullableMoney:
+      anyOf:
+        - $ref: "#/components/schemas/Money"
+        - type: "null"
+    NullableWarrantyMonths:
+      anyOf:
+        - $ref: "#/components/schemas/WarrantyMonths"
+        - type: "null"
+    NullableObject:
+      type: [object, "null"]
+      additionalProperties: true
+    WarrantyMonths:
+      type: integer
+      enum: [0, 3, 6, 12]
+    ServiceStatus:
+      type: string
+      enum: [DRAFT, IN_PROGRESS, COMPLETED, CANCELLED]
+    QuotationStatus:
+      type: string
+      enum: [DRAFT, SENT, ACCEPTED, EXPIRED, CANCELLED]
+      description: EXPIRED se deriva de validUntil para borradores o cotizaciones enviadas
+    BrandSummary:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+    CarModelSummary:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        brand:
+          $ref: "#/components/schemas/BrandSummary"
+    VehicleInput:
+      type: object
+      required: [externalId]
+      properties:
+        externalId:
+          type: string
+          format: uuid
+        carModelId:
+          type: integer
+          minimum: 1
+        modelYear:
+          type: integer
+          minimum: 1886
+          maximum: 2100
+          description: Año real del vehículo, no rango de compatibilidad
+        version:
+          type: string
+        color:
+          type: string
+        plate:
+          type: string
+        comments:
+          type: string
+      additionalProperties: false
+    VehicleResponse:
+      type: object
+      required: [clientVehicleId, id, externalId, active]
+      properties:
+        clientVehicleId:
+          type: integer
+        id:
+          type: integer
+        externalId:
+          type: string
+          format: uuid
+        carModelId:
+          $ref: "#/components/schemas/NullableInteger"
+        modelYear:
+          $ref: "#/components/schemas/NullableInteger"
+        version:
+          $ref: "#/components/schemas/NullableString"
+        color:
+          $ref: "#/components/schemas/NullableString"
+        plate:
+          $ref: "#/components/schemas/NullableString"
+        plateNormalized:
+          $ref: "#/components/schemas/NullableString"
+        comments:
+          $ref: "#/components/schemas/NullableString"
+        active:
+          type: boolean
+        carModel:
+          anyOf:
+            - $ref: "#/components/schemas/CarModelSummary"
+            - type: "null"
+    ClientCreateRequest:
+      type: object
+      required: [externalId, clientName, phoneNumber]
+      properties:
+        externalId:
+          type: string
+          format: uuid
+        clientName:
+          type: string
+          minLength: 1
+        phoneNumber:
+          type: string
+          minLength: 1
+        secondaryPhoneNumber:
+          $ref: "#/components/schemas/NullableString"
+        comments:
+          $ref: "#/components/schemas/NullableString"
+        vehicles:
+          type: array
+          items:
+            $ref: "#/components/schemas/VehicleInput"
+      additionalProperties: false
+    ClientContactUpdateRequest:
+      type: object
+      required: [secondaryPhoneNumber]
+      properties:
+        secondaryPhoneNumber:
+          $ref: "#/components/schemas/NullableString"
+      additionalProperties: false
+    AddClientVehiclesRequest:
+      oneOf:
+        - type: object
+          required: [vehicle]
+          properties:
+            vehicle:
+              $ref: "#/components/schemas/VehicleInput"
+          additionalProperties: false
+        - type: object
+          required: [vehicles]
+          properties:
+            vehicles:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/VehicleInput"
+          additionalProperties: false
+    ClientResponse:
+      type: object
+      required:
+        - id
+        - externalId
+        - clientName
+        - phoneNumber
+        - phoneNormalized
+        - active
+        - vehicles
+      properties:
+        id:
+          type: integer
+        externalId:
+          type: string
+          format: uuid
+        clientName:
+          type: string
+        phoneNumber:
+          type: string
+        phoneNormalized:
+          type: string
+          description: Teléfono normalizado para conciliación de negocio
+        secondaryPhoneNumber:
+          $ref: "#/components/schemas/NullableString"
+        comments:
+          type: string
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        vehicles:
+          type: array
+          items:
+            $ref: "#/components/schemas/VehicleResponse"
+        reconciledByPhone:
+          type: boolean
+        idempotentReplay:
+          type: boolean
+    ClientListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClientResponse"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+      additionalProperties: false
+    ReportedFailureInput:
+      type: object
+      required: [externalId, reportedFailureTypeId]
+      properties:
+        externalId:
+          type: string
+          format: uuid
+        reportedFailureTypeId:
+          type: integer
+          minimum: 1
+        otherText:
+          $ref: "#/components/schemas/NullableString"
+          minLength: 1
+        amount:
+          $ref: "#/components/schemas/NullableMoney"
+          description: Importe del renglón; null indica no capturado y cero es un importe explícito.
+        observation:
+          $ref: "#/components/schemas/NullableString"
+          maxLength: 4000
+          description: Trabajo, refacción y notas correspondientes a esta falla.
+      additionalProperties: false
+    InternalNoteInput:
+      type: object
+      description: Confidencial; nunca se devuelve en contratos públicos ni PDFs
+      required: [externalId, note]
+      properties:
+        externalId:
+          type: string
+          format: uuid
+        note:
+          type: string
+          minLength: 1
+      additionalProperties: false
+    ServiceWriteFields:
+      type: object
+      required: [clientVehicleId, taxAmount]
+      properties:
+        provisionalReference:
+          type: string
+        clientVehicleId:
+          type: integer
+          minimum: 1
+        serviceDate:
+          type: string
+          format: date
+        workManagerUserId:
+          type: string
+        reportedFailureSummary:
+          type: string
+        authorizedWorkDescription:
+          type: string
+        vehicleOperationObservations:
+          type: string
+        importantInformation:
+          type: string
+        informationalNote:
+          type: string
+        compressionLeakDetected:
+          type: boolean
+          default: false
+        coolingSystemAirPressureDetected:
+          type: boolean
+          default: false
+        radiatorSerialNumber:
+          type: string
+        radiatorObstructionLevel:
+          type: integer
+          minimum: 0
+          maximum: 10
+        lineTotalsMode:
+          type: string
+          enum: [LINES, LEGACY]
+          description: LINES calcula subtotal en servidor, ignorando el subtotal enviado. LEGACY conserva un subtotal histórico sin importes por renglón. Omitir solo en contratos históricos.
+        subtotal:
+          $ref: "#/components/schemas/Money"
+        taxAmount:
+          $ref: "#/components/schemas/Money"
+        warrantyMonths:
+          $ref: "#/components/schemas/WarrantyMonths"
+        legalTextSnapshot:
+          type: object
+          additionalProperties: true
+        reportedFailures:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportedFailureInput"
+        internalNotes:
+          type: array
+          items:
+            $ref: "#/components/schemas/InternalNoteInput"
+    ServiceCreateRequest:
+      allOf:
+        - $ref: "#/components/schemas/ServiceWriteFields"
+        - type: object
+          required: [externalId]
+          properties:
+            externalId:
+              type: string
+              format: uuid
+    ServiceUpdateRequest:
+      allOf:
+        - $ref: "#/components/schemas/ServiceWriteFields"
+        - type: object
+          required: [expectedVersion]
+          properties:
+            externalId:
+              type: string
+              format: uuid
+              description: Se toma del path; puede omitirse en el cuerpo
+            expectedVersion:
+              type: integer
+              minimum: 1
+    VersionTransitionRequest:
+      type: object
+      required: [expectedVersion]
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+    ReportedFailureType:
+      type: object
+      required: [id, code, label, displayOrder, allowsFreeText, active]
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+        label:
+          type: string
+        displayOrder:
+          type: integer
+        allowsFreeText:
+          type: boolean
+        active:
+          type: boolean
+    ServiceReportedFailureResponse:
+      type: object
+      required:
+        - id
+        - externalId
+        - reportedFailureTypeId
+        - failureCodeSnapshot
+        - labelSnapshot
+        - displayOrderSnapshot
+      properties:
+        id:
+          type: integer
+        externalId:
+          type: string
+          format: uuid
+        reportedFailureTypeId:
+          type: integer
+        failureCodeSnapshot:
+          type: string
+        labelSnapshot:
+          type: string
+        displayOrderSnapshot:
+          type: integer
+        otherText:
+          type: string
+        amount:
+          $ref: "#/components/schemas/NullableMoney"
+        observation:
+          $ref: "#/components/schemas/NullableString"
+          maxLength: 4000
+        createdAt:
+          type: string
+          format: date-time
+    ServiceItemResponse:
+      type: object
+      required:
+        - id
+        - externalId
+        - serviceId
+        - descriptionSnapshot
+        - quantity
+        - unitPrice
+        - lineTotal
+        - displayOrder
+      properties:
+        id:
+          type: integer
+        externalId:
+          type: string
+          format: uuid
+        serviceId:
+          type: integer
+        sourceQuotationItemId:
+          $ref: "#/components/schemas/NullableInteger"
+        productId:
+          $ref: "#/components/schemas/NullableInteger"
+        productNameSnapshot:
+          $ref: "#/components/schemas/NullableString"
+        descriptionSnapshot:
+          type: string
+        quantity:
+          type: number
+          exclusiveMinimum: 0
+          multipleOf: 0.001
+        unitPrice:
+          $ref: "#/components/schemas/Money"
+        lineTotal:
+          $ref: "#/components/schemas/Money"
+        warrantyMonths:
+          $ref: "#/components/schemas/NullableWarrantyMonths"
+        displayOrder:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+    ServiceResponse:
+      type: object
+      required:
+        - id
+        - externalId
+        - provisionalReference
+        - folioSeries
+        - status
+        - clientVehicleId
+        - clientId
+        - vehicleId
+        - taxAmount
+        - total
+        - version
+        - clientSnapshot
+        - vehicleSnapshot
+        - reportedFailures
+        - items
+      properties:
+        id:
+          type: integer
+        externalId:
+          type: string
+          format: uuid
+        provisionalReference:
+          type: string
+        folioSeries:
+          const: SER
+        folioNumber:
+          type: integer
+          minimum: 5000
+        folioAssignedAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/ServiceStatus"
+        serviceDate:
+          $ref: "#/components/schemas/NullableDate"
+        clientVehicleId:
+          type: integer
+        clientId:
+          type: integer
+        vehicleId:
+          type: integer
+        workManagerUserId:
+          $ref: "#/components/schemas/NullableString"
+        reportedFailureSummary:
+          $ref: "#/components/schemas/NullableString"
+        authorizedWorkDescription:
+          $ref: "#/components/schemas/NullableString"
+        vehicleOperationObservations:
+          $ref: "#/components/schemas/NullableString"
+        importantInformation:
+          $ref: "#/components/schemas/NullableString"
+        informationalNote:
+          $ref: "#/components/schemas/NullableString"
+        compressionLeakDetected:
+          type: boolean
+        coolingSystemAirPressureDetected:
+          type: boolean
+        radiatorSerialNumber:
+          $ref: "#/components/schemas/NullableString"
+        radiatorObstructionLevel:
+          anyOf:
+            - type: integer
+              minimum: 0
+              maximum: 10
+            - type: "null"
+        lineTotalsMode:
+          type: [string, "null"]
+          enum: [LINES, LEGACY, null]
+          description: null identifica órdenes anteriores al contrato de renglones.
+        subtotal:
+          $ref: "#/components/schemas/NullableMoney"
+        taxAmount:
+          $ref: "#/components/schemas/Money"
+        total:
+          $ref: "#/components/schemas/Money"
+        warrantyMonths:
+          $ref: "#/components/schemas/NullableWarrantyMonths"
+        clientSnapshot:
+          type: object
+          additionalProperties: true
+        vehicleSnapshot:
+          type: object
+          additionalProperties: true
+        workManagerSnapshot:
+          $ref: "#/components/schemas/NullableObject"
+        legalTextSnapshot:
+          type: object
+          additionalProperties: true
+        version:
+          type: integer
+          minimum: 1
+        createdByUserId:
+          type: string
+        updatedByUserId:
+          type: string
+        completedByUserId:
+          $ref: "#/components/schemas/NullableString"
+        cancelledByUserId:
+          $ref: "#/components/schemas/NullableString"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          $ref: "#/components/schemas/NullableDateTime"
+        cancelledAt:
+          $ref: "#/components/schemas/NullableDateTime"
+        sourceQuotationId:
+          $ref: "#/components/schemas/NullableInteger"
+        sourceQuotationOptionId:
+          $ref: "#/components/schemas/NullableInteger"
+        reportedFailures:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServiceReportedFailureResponse"
+        items:
+          type: array
+          description: Conceptos estructurados copiados al convertir una cotización
+          items:
+            $ref: "#/components/schemas/ServiceItemResponse"
+        idempotentReplay:
+          type: boolean
+      description: Nunca contiene internalNotes.
+    ServiceListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServiceResponse"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+      additionalProperties: false
+    QuotationItemInput:
+      type: object
+      required: [externalId, quantity, unitPrice]
+      properties:
+        externalId:
+          type: string
+          format: uuid
+        productId:
+          type: integer
+          minimum: 1
+          description: Opcional; el concepto puede ser completamente genérico
+        description:
+          type: string
+          minLength: 1
+          description: Obligatoria cuando no se proporciona productId
+        quantity:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 999999999.999
+          multipleOf: 0.001
+        unitPrice:
+          $ref: "#/components/schemas/Money"
+        warrantyMonths:
+          $ref: "#/components/schemas/WarrantyMonths"
+      additionalProperties: false
+    QuotationOptionInput:
+      type: object
+      required: [externalId, name, taxAmount, items]
+      properties:
+        externalId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        taxAmount:
+          allOf:
+            - $ref: "#/components/schemas/Money"
+          description: IVA manual obligatorio; no se deriva de una tasa
+        warrantyMonths:
+          $ref: "#/components/schemas/WarrantyMonths"
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/QuotationItemInput"
+      additionalProperties: false
+    QuotationWriteFields:
+      type: object
+      required: [clientVehicleId, options]
+      properties:
+        provisionalReference:
+          type: string
+        quotationDate:
+          type: string
+          format: date
+        validUntil:
+          type: string
+          format: date
+          description: Debe ser igual o posterior a quotationDate
+        clientVehicleId:
+          type: integer
+          minimum: 1
+        attendedByUserId:
+          type: string
+        notes:
+          type: string
+        legalTextSnapshot:
+          type: object
+          additionalProperties: true
+        options:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/QuotationOptionInput"
+    QuotationCreateRequest:
+      allOf:
+        - $ref: "#/components/schemas/QuotationWriteFields"
+        - type: object
+          required: [externalId]
+          properties:
+            externalId:
+              type: string
+              format: uuid
+    QuotationUpdateRequest:
+      allOf:
+        - $ref: "#/components/schemas/QuotationWriteFields"
+        - type: object
+          required: [expectedVersion]
+          properties:
+            externalId:
+              type: string
+              format: uuid
+              description: Se toma del path; puede omitirse en el cuerpo
+            expectedVersion:
+              type: integer
+              minimum: 1
+    QuotationDuplicateRequest:
+      type: object
+      required: [externalId]
+      properties:
+        externalId:
+          type: string
+          format: uuid
+          description: Nuevo UUID generado por el dispositivo
+        provisionalReference:
+          type: string
+        quotationDate:
+          type: string
+          format: date
+        validUntil:
+          type: string
+          format: date
+      additionalProperties: false
+    QuotationReactivateRequest:
+      type: object
+      required: [expectedVersion, validUntil]
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 1
+        validUntil:
+          type: string
+          format: date
+      additionalProperties: false
+    QuotationConversionRequest:
+      type: object
+      required: [optionExternalId, serviceExternalId, expectedVersion]
+      properties:
+        optionExternalId:
+          type: string
+          format: uuid
+        serviceExternalId:
+          type: string
+          format: uuid
+          description: UUID idempotente del servicio que se creará
+        serviceProvisionalReference:
+          type: string
+        serviceDate:
+          type: string
+          format: date
+        expectedVersion:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+    QuotationItemResponse:
+      type: object
+      required:
+        - id
+        - externalId
+        - quotationOptionId
+        - descriptionSnapshot
+        - quantity
+        - unitPrice
+        - lineTotal
+        - displayOrder
+      properties:
+        id:
+          type: integer
+        externalId:
+          type: string
+          format: uuid
+        quotationOptionId:
+          type: integer
+        productId:
+          $ref: "#/components/schemas/NullableInteger"
+        productNameSnapshot:
+          $ref: "#/components/schemas/NullableString"
+        descriptionSnapshot:
+          type: string
+        quantity:
+          type: number
+          exclusiveMinimum: 0
+          multipleOf: 0.001
+        unitPrice:
+          $ref: "#/components/schemas/Money"
+        lineTotal:
+          allOf:
+            - $ref: "#/components/schemas/Money"
+          readOnly: true
+        warrantyMonths:
+          $ref: "#/components/schemas/NullableWarrantyMonths"
+        displayOrder:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+    QuotationOptionResponse:
+      type: object
+      required:
+        - id
+        - externalId
+        - quotationId
+        - name
+        - displayOrder
+        - subtotal
+        - taxAmount
+        - total
+        - items
+      properties:
+        id:
+          type: integer
+        externalId:
+          type: string
+          format: uuid
+        quotationId:
+          type: integer
+        name:
+          type: string
+        description:
+          $ref: "#/components/schemas/NullableString"
+        displayOrder:
+          type: integer
+        subtotal:
+          allOf:
+            - $ref: "#/components/schemas/Money"
+          readOnly: true
+        taxAmount:
+          $ref: "#/components/schemas/Money"
+        total:
+          allOf:
+            - $ref: "#/components/schemas/Money"
+          readOnly: true
+        warrantyMonths:
+          $ref: "#/components/schemas/NullableWarrantyMonths"
+        createdAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotationItemResponse"
+    QuotationResponse:
+      type: object
+      required:
+        - id
+        - externalId
+        - provisionalReference
+        - folioSeries
+        - status
+        - quotationDate
+        - clientVehicleId
+        - clientId
+        - vehicleId
+        - clientSnapshot
+        - vehicleSnapshot
+        - version
+        - options
+      properties:
+        id:
+          type: integer
+        externalId:
+          type: string
+          format: uuid
+        provisionalReference:
+          type: string
+        folioSeries:
+          const: COT
+        folioNumber:
+          type: integer
+          minimum: 5000
+        folioAssignedAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/QuotationStatus"
+        quotationDate:
+          type: string
+          format: date
+        validUntil:
+          $ref: "#/components/schemas/NullableDate"
+        clientVehicleId:
+          type: integer
+        clientId:
+          type: integer
+        vehicleId:
+          type: integer
+        attendedByUserId:
+          $ref: "#/components/schemas/NullableString"
+        notes:
+          $ref: "#/components/schemas/NullableString"
+        clientSnapshot:
+          type: object
+          additionalProperties: true
+        vehicleSnapshot:
+          type: object
+          additionalProperties: true
+        attendedBySnapshot:
+          $ref: "#/components/schemas/NullableObject"
+        legalTextSnapshot:
+          type: object
+          additionalProperties: true
+        acceptedOptionId:
+          $ref: "#/components/schemas/NullableInteger"
+        acceptedSubtotal:
+          $ref: "#/components/schemas/NullableMoney"
+        acceptedTaxAmount:
+          $ref: "#/components/schemas/NullableMoney"
+        acceptedTotal:
+          $ref: "#/components/schemas/NullableMoney"
+        convertedServiceId:
+          $ref: "#/components/schemas/NullableInteger"
+        duplicatedFromQuotationId:
+          $ref: "#/components/schemas/NullableInteger"
+        version:
+          type: integer
+          minimum: 1
+        createdByUserId:
+          type: string
+        updatedByUserId:
+          type: string
+        acceptedByUserId:
+          $ref: "#/components/schemas/NullableString"
+        cancelledByUserId:
+          $ref: "#/components/schemas/NullableString"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        acceptedAt:
+          $ref: "#/components/schemas/NullableDateTime"
+        cancelledAt:
+          $ref: "#/components/schemas/NullableDateTime"
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotationOptionResponse"
+        idempotentReplay:
+          type: boolean
+    QuotationListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotationResponse"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+      additionalProperties: false
+    QuotationConversionResponse:
+      type: object
+      required: [quotation, service, idempotentReplay]
+      properties:
+        quotation:
+          $ref: "#/components/schemas/QuotationResponse"
+        service:
+          $ref: "#/components/schemas/ServiceResponse"
+        idempotentReplay:
+          type: boolean
+      additionalProperties: false
