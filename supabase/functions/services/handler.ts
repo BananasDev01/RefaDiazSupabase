@@ -94,6 +94,7 @@ async function handleServiceList(url: URL, supabase: any): Promise<Response> {
     p_date_to: dateTo,
     p_phone: url.searchParams.get("phone"),
     p_plate: url.searchParams.get("plate"),
+    p_query: url.searchParams.get("q"),
     p_status: status,
     p_client_id: clientId,
     p_limit: limit,
