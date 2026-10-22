@@ -353,8 +353,22 @@ async function handleDeleteUser(req: Request): Promise<Response> {
 
 // Función principal que enruta la petición según el método HTTP
 serveWithCors(async (req: Request) => {
-  const authorization = await requireAppRole(req, supabase, ["ADMINISTRADOR"]);
+  const requestedId = new URL(req.url).searchParams.get("id");
+  // Every active staff member loads their own profile right after signing in;
+  // the rest of user management stays restricted to administrators.
+  const readsProfile = req.method === "GET" && Boolean(requestedId);
+  const authorization = await requireAppRole(
+    req,
+    supabase,
+    readsProfile ? ["ADMINISTRADOR", "EMPLEADO"] : ["ADMINISTRADOR"],
+  );
   if (authorization instanceof Response) return authorization;
+  if (readsProfile && authorization.role !== "ADMINISTRADOR" && requestedId !== authorization.userId) {
+    return new Response(
+      JSON.stringify({ error: "El rol del usuario no permite esta operación" }),
+      { status: 403, headers: { "Content-Type": "application/json" } }
+    );
+  }
 
   switch (req.method) {
     case "GET":
