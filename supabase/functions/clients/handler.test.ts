@@ -85,6 +85,17 @@ Deno.test("PATCH rejects changing primary phone and can clear secondary phone", 
   assertEquals((await handleClientsRequest(request({ secondaryPhoneNumber: null }), supabase, authorization)).status, 200);
 });
 
+Deno.test("PATCH updates name and comments but never the primary phone", async () => {
+  const supabase = fakeSupabase(() => ({ id: 10, client_name: "Nombre nuevo", comments: "Cliente frecuente" }));
+  const request = (payload: object) => new Request("http://localhost/clients/10", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  assertEquals((await handleClientsRequest(request({ clientName: "Nombre nuevo", comments: "Cliente frecuente" }), supabase, authorization)).status, 200);
+  assertEquals(supabase.calls[0].args.p_payload, { client_name: "Nombre nuevo", comments: "Cliente frecuente", client_id: 10 });
+  for (const payload of [{}, { clientName: "  " }, { comments: "x".repeat(501) }, { clientName: "Otro", phoneNumber: "8112345678" }]) {
+    assertEquals((await handleClientsRequest(request(payload), supabase, authorization)).status, 400);
+  }
+  assertEquals(supabase.calls.length, 1);
+});
+
 Deno.test("client validation requires stable offline identity", () => {
   const result = validateClientPayload({
     clientName: "Cliente",

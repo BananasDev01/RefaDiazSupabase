@@ -21,6 +21,14 @@ export function validateClientPayload(
     }
   }
 
+  if (existingClient && payload.clientName !== undefined && (typeof payload.clientName !== "string" || !payload.clientName.trim() || payload.clientName.trim().length > 300)) {
+    errors.push({ field: "clientName", message: "Es obligatorio y no puede exceder 300 caracteres" });
+  }
+
+  if (payload.comments !== undefined && payload.comments !== null && (typeof payload.comments !== "string" || payload.comments.trim().length > 500)) {
+    errors.push({ field: "comments", message: "No puede exceder 500 caracteres" });
+  }
+
   if (existingClient && !isPositiveInteger(payload.clientId)) {
     errors.push({ field: "clientId", message: "Debe ser un entero positivo" });
   }

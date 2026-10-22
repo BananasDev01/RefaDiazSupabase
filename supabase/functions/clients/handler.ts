@@ -36,8 +36,11 @@ export async function handleClientsRequest(
     const clientId = positiveInteger(segments[0]);
     const body = await readJsonObject(req);
     if (body instanceof Response) return body;
-    if (!clientId || !Object.hasOwn(body, "secondaryPhoneNumber") || Object.keys(body).some((key) => key !== "secondaryPhoneNumber")) {
-      return validationResponse([{ field: "secondaryPhoneNumber", message: "Solo se permite actualizar el segundo teléfono" }]);
+    const editable = ["clientName", "comments", "secondaryPhoneNumber"];
+    const keys = Object.keys(body);
+    // The primary phone identifies the client and is never edited here.
+    if (!clientId || keys.length === 0 || keys.some((key) => !editable.includes(key))) {
+      return validationResponse([{ field: "body", message: "Solo se permite actualizar nombre, comentarios y teléfono secundario" }]);
     }
     const validation = validateClientPayload({ ...body, clientId });
     if (!validation.ok) return validationResponse(validation.errors);
