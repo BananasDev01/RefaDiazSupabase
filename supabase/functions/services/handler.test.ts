@@ -130,7 +130,7 @@ Deno.test("GET /services forwards history and operational filters", async () => 
   }));
   const response = await handleServicesRequest(
     new Request(
-      "http://localhost/services?clientId=7&folio=SER-5000&phone=8112345678&plate=ABC123&status=completed&dateFrom=2026-08-01&dateTo=2026-08-31",
+      "http://localhost/services?clientId=7&folio=SER-5000&phone=8112345678&plate=ABC123&status=completed&dateFrom=2026-08-01&dateTo=2026-08-31&q=nissan%20gris",
     ),
     supabase,
     authorization,
@@ -141,6 +141,7 @@ Deno.test("GET /services forwards history and operational filters", async () => 
   assertEquals(supabase.calls[0].args.p_client_id, 7);
   assertEquals(supabase.calls[0].args.p_status, "COMPLETED");
   assertEquals(supabase.calls[0].args.p_folio, "SER-5000");
+  assertEquals(supabase.calls[0].args.p_query, "nissan gris");
 });
 
 Deno.test("GET service detail strips private notes defensively", async () => {
