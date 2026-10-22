@@ -230,7 +230,7 @@ paths:
     patch:
       tags: [Clients]
       operationId: updateClientContact
-      summary: Actualizar o quitar el segundo teléfono sin cambiar el celular principal
+      summary: Actualizar nombre, comentarios o teléfono secundario sin cambiar el celular principal
       parameters:
         - $ref: "#/components/parameters/ClientIdPath"
       requestBody:
@@ -1310,8 +1310,18 @@ components:
       additionalProperties: false
     ClientContactUpdateRequest:
       type: object
-      required: [secondaryPhoneNumber]
+      description: Al menos uno de los campos. El celular principal identifica al cliente y no se edita.
+      minProperties: 1
       properties:
+        clientName:
+          type: string
+          minLength: 1
+          maxLength: 300
+        comments:
+          oneOf:
+            - type: string
+              maxLength: 500
+            - type: "null"
         secondaryPhoneNumber:
           $ref: "#/components/schemas/NullableString"
       additionalProperties: false
