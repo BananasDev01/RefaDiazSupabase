@@ -130,7 +130,7 @@ Deno.test("GET /services forwards history and operational filters", async () => 
   }));
   const response = await handleServicesRequest(
     new Request(
-      "http://localhost/services?clientId=7&folio=SER-5000&phone=8112345678&plate=ABC123&status=completed&dateFrom=2026-08-01&dateTo=2026-08-31&q=nissan%20gris",
+      "http://localhost/services?clientId=7&folio=SER-5000&phone=8112345678&plate=ABC123&status=completed&dateFrom=2026-08-01&dateTo=2026-08-31&q=nissan%20gris&category=part",
     ),
     supabase,
     authorization,
@@ -142,6 +142,7 @@ Deno.test("GET /services forwards history and operational filters", async () => 
   assertEquals(supabase.calls[0].args.p_status, "COMPLETED");
   assertEquals(supabase.calls[0].args.p_folio, "SER-5000");
   assertEquals(supabase.calls[0].args.p_query, "nissan gris");
+  assertEquals(supabase.calls[0].args.p_category, "PART");
 });
 
 Deno.test("GET service detail strips private notes defensively", async () => {
@@ -210,6 +211,41 @@ Deno.test("POST complete maps to controlled transition", async () => {
   assertEquals(response.status, 200);
   assertEquals(supabase.calls[0].name, "transition_service_v1");
   assertEquals(supabase.calls[0].args.p_action, "COMPLETE");
+});
+
+Deno.test("POST cancel requires a reason and forwards it", async () => {
+  const supabase = fakeSupabase((_name, args) => ({
+    data: {
+      status: "CANCELLED",
+      version: (args.p_expected_version as number) + 1,
+    },
+  }));
+  const request = (payload: Record<string, unknown>) =>
+    new Request(
+      "http://localhost/services/90000000-0000-4000-8000-000000000001/cancel",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+
+  const missing = await handleServicesRequest(
+    request({ expectedVersion: 2 }),
+    supabase,
+    authorization,
+  );
+  assertEquals(missing.status, 400);
+  assertEquals(supabase.calls.length, 0);
+
+  const response = await handleServicesRequest(
+    request({ expectedVersion: 2, reason: "  Capturada por error " }),
+    supabase,
+    authorization,
+  );
+  assertEquals(response.status, 200);
+  assertEquals(supabase.calls[0].args.p_action, "CANCEL");
+  assertEquals(supabase.calls[0].args.p_reason, "Capturada por error");
 });
 
 Deno.test("POST start promotes a draft to in progress", async () => {

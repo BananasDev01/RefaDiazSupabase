@@ -17,6 +17,19 @@ function check(value: Record<string, unknown>, expected: boolean) {
   if (result.ok !== expected) throw new Error(JSON.stringify(result));
 }
 
+Deno.test("part orders need the client instead of a vehicle", () => {
+  const part = { ...payload, clientVehicleId: undefined, category: "PART" };
+  check(
+    { ...part, clientId: 7, partDescription: "Radiador de Tsuru 2004" },
+    true,
+  );
+  check({ ...part, clientId: 7 }, true);
+  check(part, false);
+  check({ ...part, clientId: 7, partDescription: "a".repeat(501) }, false);
+  check({ ...payload, category: "BOAT" }, false);
+  check({ ...payload, clientVehicleId: undefined }, false);
+});
+
 Deno.test("native rows accept amounts, zero and null without otherText", () => {
   for (const amount of [3800, 0, null]) {
     check({ ...payload, reportedFailures: [{ ...row, amount }] }, true);

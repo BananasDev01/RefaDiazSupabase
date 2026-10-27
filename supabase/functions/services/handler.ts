@@ -59,6 +59,7 @@ async function handleServiceList(url: URL, supabase: any): Promise<Response> {
   const dateFrom = url.searchParams.get("dateFrom");
   const dateTo = url.searchParams.get("dateTo");
   const status = url.searchParams.get("status")?.toUpperCase() ?? null;
+  const category = url.searchParams.get("category")?.toUpperCase() ?? null;
 
   if (limit === null || offset === null) {
     return jsonResponse({
@@ -80,11 +81,17 @@ async function handleServiceList(url: URL, supabase: any): Promise<Response> {
   }
   if (
     status !== null &&
-    !["DRAFT", "IN_PROGRESS", "COMPLETED", "CANCELLED"].includes(status)
+    !["IN_PROGRESS", "COMPLETED", "CANCELLED"].includes(status)
   ) {
     return jsonResponse({
       code: "STATUS_INVALID",
       error: "El estado no es válido",
+    }, 400);
+  }
+  if (category !== null && !["VEHICLE", "PART"].includes(category)) {
+    return jsonResponse({
+      code: "CATEGORY_INVALID",
+      error: "La categoría no es válida",
     }, 400);
   }
 
@@ -95,6 +102,7 @@ async function handleServiceList(url: URL, supabase: any): Promise<Response> {
     p_phone: url.searchParams.get("phone"),
     p_plate: url.searchParams.get("plate"),
     p_query: url.searchParams.get("q"),
+    p_category: category,
     p_status: status,
     p_client_id: clientId,
     p_limit: limit,
@@ -214,7 +222,8 @@ export async function handleServicesRequest(
     }
     const body = await readJsonObject(req);
     if (body instanceof Response) return body;
-    const validation = validateTransitionPayload(body);
+    const action = segments[1] as "start" | "complete" | "cancel";
+    const validation = validateTransitionPayload(body, action);
     if (!validation.ok) return validationResponse(validation.errors);
 
     const { data, error } = await supabase.rpc("transition_service_v1", {
@@ -226,6 +235,7 @@ export async function handleServicesRequest(
         ? "COMPLETE"
         : "CANCEL",
       p_actor_user_id: authorization.userId,
+      p_reason: action === "cancel" ? (body.reason as string).trim() : null,
     });
     if (error) return rpcErrorResponse(error);
     return jsonResponse(publicServiceResponse(data));
