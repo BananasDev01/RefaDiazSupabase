@@ -136,7 +136,30 @@ export function validateServicePayload(
   if (!isUuid(payload.externalId)) {
     errors.push({ field: "externalId", message: "Debe ser un UUID válido" });
   }
-  if (!positiveInteger(payload.clientVehicleId)) {
+  const category = payload.category ?? "VEHICLE";
+  if (!["VEHICLE", "PART"].includes(category as string)) {
+    errors.push({ field: "category", message: "Debe ser VEHICLE o PART" });
+  }
+  if (category === "PART") {
+    // A loose part belongs to the client; there is no vehicle to record.
+    if (!positiveInteger(payload.clientId)) {
+      errors.push({
+        field: "clientId",
+        message: "Debe ser un entero positivo",
+      });
+    }
+    if (
+      payload.partDescription !== undefined &&
+      payload.partDescription !== null &&
+      (typeof payload.partDescription !== "string" ||
+        payload.partDescription.length > 500)
+    ) {
+      errors.push({
+        field: "partDescription",
+        message: "Debe ser texto de máximo 500 caracteres",
+      });
+    }
+  } else if (!positiveInteger(payload.clientVehicleId)) {
     errors.push({
       field: "clientVehicleId",
       message: "Debe ser un entero positivo",
@@ -195,15 +218,25 @@ export function validateServicePayload(
 
 export function validateTransitionPayload(
   payload: Record<string, unknown>,
+  action: "start" | "complete" | "cancel",
 ): ValidationResult {
+  const errors: Array<{ field: string; message: string }> = [];
   if (!positiveInteger(payload.expectedVersion)) {
-    return {
-      ok: false,
-      errors: [{
-        field: "expectedVersion",
-        message: "Debe ser un entero positivo",
-      }],
-    };
+    errors.push({
+      field: "expectedVersion",
+      message: "Debe ser un entero positivo",
+    });
   }
-  return { ok: true };
+  // Cancel deletes the order from the lists, so the reason is kept for the record.
+  if (
+    action === "cancel" &&
+    (typeof payload.reason !== "string" || !payload.reason.trim() ||
+      payload.reason.length > 500)
+  ) {
+    errors.push({
+      field: "reason",
+      message: "Es obligatorio y de máximo 500 caracteres",
+    });
+  }
+  return errors.length > 0 ? { ok: false, errors } : { ok: true };
 }

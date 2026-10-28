@@ -350,8 +350,13 @@ paths:
             type: string
         - name: status
           in: query
+          description: Sin estado se omiten las órdenes eliminadas
           schema:
             $ref: "#/components/schemas/ServiceStatus"
+        - name: category
+          in: query
+          schema:
+            $ref: "#/components/schemas/ServiceCategory"
         - $ref: "#/components/parameters/ClientIdQuery"
         - $ref: "#/components/parameters/LimitQuery"
         - $ref: "#/components/parameters/OffsetQuery"
@@ -545,8 +550,9 @@ paths:
     post:
       tags: [Services]
       operationId: startService
-      summary: Iniciar un servicio guardado como borrador
-      description: Cambia una orden `DRAFT` a `IN_PROGRESS` con control optimista.
+      summary: Iniciar un servicio (obsoleto)
+      deprecated: true
+      description: Las órdenes ya nacen `IN_PROGRESS`; se conserva para pantallas anteriores y no cambia nada.
       parameters:
         - $ref: "#/components/parameters/ServiceExternalIdPath"
       requestBody:
@@ -574,11 +580,19 @@ paths:
     post:
       tags: [Services]
       operationId: cancelService
-      summary: Cancelar un servicio
+      summary: Eliminar un servicio
+      description: Marca la orden como `CANCELLED` (abierta o completada) con el motivo; deja de aparecer en listas y búsquedas.
       parameters:
         - $ref: "#/components/parameters/ServiceExternalIdPath"
       requestBody:
-        $ref: "#/components/requestBodies/VersionTransition"
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceCancelRequest"
+            example:
+              expectedVersion: 2
+              reason: Capturada por error
       responses:
         "200":
           description: Servicio cancelado o reintento idempotente
@@ -1213,7 +1227,12 @@ components:
       enum: [0, 3, 6, 12]
     ServiceStatus:
       type: string
-      enum: [DRAFT, IN_PROGRESS, COMPLETED, CANCELLED]
+      enum: [IN_PROGRESS, COMPLETED, CANCELLED]
+      description: CANCELLED es una orden eliminada; solo aparece al filtrarla explícitamente
+    ServiceCategory:
+      type: string
+      enum: [VEHICLE, PART]
+      description: VEHICLE entra al taller con su vehículo; PART es una pieza suelta sin vehículo
     QuotationStatus:
       type: string
       enum: [DRAFT, SENT, ACCEPTED, EXPIRED, CANCELLED]
@@ -1436,13 +1455,24 @@ components:
       additionalProperties: false
     ServiceWriteFields:
       type: object
-      required: [clientVehicleId, taxAmount]
+      required: [taxAmount]
+      description: VEHICLE requiere clientVehicleId; PART requiere clientId y no lleva vehículo
       properties:
         provisionalReference:
           type: string
+        category:
+          $ref: "#/components/schemas/ServiceCategory"
         clientVehicleId:
           type: integer
           minimum: 1
+        clientId:
+          type: integer
+          minimum: 1
+          description: Solo para PART
+        partDescription:
+          type: string
+          maxLength: 500
+          description: Solo para PART
         serviceDate:
           type: string
           format: date
@@ -1520,6 +1550,18 @@ components:
         expectedVersion:
           type: integer
           minimum: 1
+      additionalProperties: false
+    ServiceCancelRequest:
+      type: object
+      required: [expectedVersion, reason]
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
       additionalProperties: false
     ReportedFailureType:
       type: object
@@ -1620,9 +1662,8 @@ components:
         - provisionalReference
         - folioSeries
         - status
-        - clientVehicleId
+        - category
         - clientId
-        - vehicleId
         - taxAmount
         - total
         - version
@@ -1648,14 +1689,20 @@ components:
           format: date-time
         status:
           $ref: "#/components/schemas/ServiceStatus"
+        category:
+          $ref: "#/components/schemas/ServiceCategory"
+        partDescription:
+          $ref: "#/components/schemas/NullableString"
+        cancellationReason:
+          $ref: "#/components/schemas/NullableString"
         serviceDate:
           $ref: "#/components/schemas/NullableDate"
         clientVehicleId:
-          type: integer
+          type: [integer, "null"]
         clientId:
           type: integer
         vehicleId:
-          type: integer
+          type: [integer, "null"]
         workManagerUserId:
           $ref: "#/components/schemas/NullableString"
         reportedFailureSummary:
