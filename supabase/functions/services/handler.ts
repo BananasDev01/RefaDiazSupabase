@@ -9,6 +9,8 @@ import {
 } from "../_shared/api.ts";
 import { convertToCamelCase, convertToSnakeCase } from "../_shared/utils.ts";
 import {
+  QUICK_PHRASE_FIELDS,
+  validateQuickPhrasesPayload,
   validateServicePayload,
   validateTransitionPayload,
 } from "./validation.ts";
@@ -143,6 +145,63 @@ async function handleFailureCatalog(supabase: any): Promise<Response> {
   return jsonResponse(convertToCamelCase(data));
 }
 
+function quickPhraseField(value: unknown): string | null {
+  const field = typeof value === "string"
+    ? value.toUpperCase()
+    : "IMPORTANT_INFORMATION";
+  return QUICK_PHRASE_FIELDS.includes(
+      field as typeof QUICK_PHRASE_FIELDS[number],
+    )
+    ? field
+    : null;
+}
+
+async function handleQuickPhraseList(
+  url: URL,
+  supabase: any,
+): Promise<Response> {
+  const field = quickPhraseField(url.searchParams.get("field") ?? undefined);
+  if (!field) {
+    return jsonResponse({
+      code: "QUICK_PHRASE_FIELD_INVALID",
+      error: "El campo no es válido",
+    }, 400);
+  }
+  const { data, error } = await supabase.rpc("list_service_quick_phrases_v1", {
+    p_field: field,
+  });
+  if (error) return rpcErrorResponse(error);
+  return jsonResponse(convertToCamelCase(data));
+}
+
+async function handleQuickPhraseReplace(
+  req: Request,
+  supabase: any,
+  authorization: AppAuthorization,
+): Promise<Response> {
+  const body = await readJsonObject(req);
+  if (body instanceof Response) return body;
+  const validation = validateQuickPhrasesPayload(body);
+  if (!validation.ok) return validationResponse(validation.errors);
+
+  const phrases = (body.phrases as Array<Record<string, unknown>>).map((
+    item,
+  ) => ({
+    external_id: item.externalId ?? null,
+    phrase: (item.phrase as string).trim(),
+  }));
+  const { data, error } = await supabase.rpc(
+    "replace_service_quick_phrases_v1",
+    {
+      p_field: quickPhraseField(body.field),
+      p_phrases: phrases,
+      p_actor_user_id: authorization.userId,
+    },
+  );
+  if (error) return rpcErrorResponse(error);
+  return jsonResponse(convertToCamelCase(data));
+}
+
 export async function handleServicesRequest(
   req: Request,
   supabase: any,
@@ -154,6 +213,9 @@ export async function handleServicesRequest(
   if (req.method === "GET") {
     if (segments.length === 1 && segments[0] === "failure-types") {
       return await handleFailureCatalog(supabase);
+    }
+    if (segments.length === 1 && segments[0] === "quick-phrases") {
+      return await handleQuickPhraseList(url, supabase);
     }
     if (segments.length === 1) {
       return await handleServiceDetail(segments[0], supabase);
@@ -189,6 +251,13 @@ export async function handleServicesRequest(
     );
   }
 
+  if (
+    req.method === "PUT" && segments.length === 1 &&
+    segments[0] === "quick-phrases"
+  ) {
+    return await handleQuickPhraseReplace(req, supabase, authorization);
+  }
+
   if (req.method === "PUT" && segments.length === 1) {
     if (!isUuid(segments[0])) {
       return jsonResponse({
@@ -212,7 +281,7 @@ export async function handleServicesRequest(
 
   if (
     req.method === "POST" && segments.length === 2 &&
-    ["start", "complete", "cancel"].includes(segments[1])
+    ["start", "complete", "cancel", "restore"].includes(segments[1])
   ) {
     if (!isUuid(segments[0])) {
       return jsonResponse({
@@ -222,18 +291,14 @@ export async function handleServicesRequest(
     }
     const body = await readJsonObject(req);
     if (body instanceof Response) return body;
-    const action = segments[1] as "start" | "complete" | "cancel";
+    const action = segments[1] as "start" | "complete" | "cancel" | "restore";
     const validation = validateTransitionPayload(body, action);
     if (!validation.ok) return validationResponse(validation.errors);
 
     const { data, error } = await supabase.rpc("transition_service_v1", {
       p_external_id: segments[0],
       p_expected_version: body.expectedVersion,
-      p_action: segments[1] === "start"
-        ? "START"
-        : segments[1] === "complete"
-        ? "COMPLETE"
-        : "CANCEL",
+      p_action: action.toUpperCase(),
       p_actor_user_id: authorization.userId,
       p_reason: action === "cancel" ? (body.reason as string).trim() : null,
     });

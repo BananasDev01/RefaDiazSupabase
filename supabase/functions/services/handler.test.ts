@@ -248,6 +248,49 @@ Deno.test("POST cancel requires a reason and forwards it", async () => {
   assertEquals(supabase.calls[0].args.p_reason, "Capturada por error");
 });
 
+Deno.test("POST restore brings a deleted order back", async () => {
+  const supabase = fakeSupabase((_name, args) => ({
+    data: {
+      status: "IN_PROGRESS",
+      version: (args.p_expected_version as number) + 1,
+    },
+  }));
+  const response = await handleServicesRequest(
+    new Request(
+      "http://localhost/services/90000000-0000-4000-8000-000000000001/restore",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expectedVersion: 5 }),
+      },
+    ),
+    supabase,
+    authorization,
+  );
+  assertEquals(response.status, 200);
+  assertEquals(supabase.calls[0].args.p_action, "RESTORE");
+  assertEquals(supabase.calls[0].args.p_reason, null);
+});
+
+Deno.test("the single internal note is returned to staff, the legacy list is not", async () => {
+  const supabase = fakeSupabase(() => ({
+    data: {
+      internal_note: "Regresó por fuga",
+      internal_notes: [{ note: "vieja" }],
+    },
+  }));
+  const response = await handleServicesRequest(
+    new Request(
+      "http://localhost/services/90000000-0000-4000-8000-000000000001",
+    ),
+    supabase,
+    authorization,
+  );
+  const payload = await body(response);
+  assertEquals(payload.internalNote, "Regresó por fuga");
+  assertEquals("internalNotes" in payload, false);
+});
+
 Deno.test("POST start promotes a draft to in progress", async () => {
   const supabase = fakeSupabase((_name, args) => ({
     data: {
@@ -294,4 +337,72 @@ Deno.test("optimistic conflict is exposed as HTTP 409", async () => {
   );
   assertEquals(response.status, 409);
   assertEquals((await body(response)).code, "SERVICE_VERSION_CONFLICT");
+});
+
+Deno.test("quick phrases are listed and replaced as one list", async () => {
+  const supabase = fakeSupabase((name) => ({
+    data: name === "list_service_quick_phrases_v1" ||
+        name === "replace_service_quick_phrases_v1"
+      ? [{
+        external_id: "90000000-0000-4000-8000-000000000010",
+        phrase: "CLIMA SÍ FUNCIONA",
+        display_order: 1,
+      }]
+      : null,
+  }));
+
+  const list = await handleServicesRequest(
+    new Request("http://localhost/services/quick-phrases"),
+    supabase,
+    authorization,
+  );
+  assertEquals(list.status, 200);
+  assertEquals(supabase.calls[0].args, { p_field: "IMPORTANT_INFORMATION" });
+  assertEquals(
+    (await body(list))[0].externalId,
+    "90000000-0000-4000-8000-000000000010",
+  );
+
+  const replace = await handleServicesRequest(
+    new Request("http://localhost/services/quick-phrases", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phrases: [
+          {
+            externalId: "90000000-0000-4000-8000-000000000010",
+            phrase: "  CLIMA SÍ FUNCIONA ",
+          },
+          { phrase: "NUEVA" },
+        ],
+      }),
+    }),
+    supabase,
+    authorization,
+  );
+  assertEquals(replace.status, 200);
+  assertEquals(supabase.calls[1].name, "replace_service_quick_phrases_v1");
+  assertEquals(supabase.calls[1].args.p_phrases, [
+    {
+      external_id: "90000000-0000-4000-8000-000000000010",
+      phrase: "CLIMA SÍ FUNCIONA",
+    },
+    { external_id: null, phrase: "NUEVA" },
+  ]);
+  assertEquals(supabase.calls[1].args.p_actor_user_id, authorization.userId);
+});
+
+Deno.test("quick phrases reject empty text", async () => {
+  const supabase = fakeSupabase(() => ({}));
+  const response = await handleServicesRequest(
+    new Request("http://localhost/services/quick-phrases", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phrases: [{ phrase: "   " }] }),
+    }),
+    supabase,
+    authorization,
+  );
+  assertEquals(response.status, 400);
+  assertEquals(supabase.calls.length, 0);
 });

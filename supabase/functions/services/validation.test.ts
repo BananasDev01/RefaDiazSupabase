@@ -30,6 +30,13 @@ Deno.test("part orders need the client instead of a vehicle", () => {
   check({ ...payload, clientVehicleId: undefined }, false);
 });
 
+Deno.test("the internal note is optional text", () => {
+  check({ ...payload, internalNote: "Regresó por fuga" }, true);
+  check({ ...payload, internalNote: null }, true);
+  check({ ...payload, internalNote: 12 }, false);
+  check({ ...payload, internalNote: "a".repeat(4001) }, false);
+});
+
 Deno.test("native rows accept amounts, zero and null without otherText", () => {
   for (const amount of [3800, 0, null]) {
     check({ ...payload, reportedFailures: [{ ...row, amount }] }, true);
