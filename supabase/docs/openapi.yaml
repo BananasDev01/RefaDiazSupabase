@@ -456,6 +456,62 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/ServerError"
+  /services/quick-phrases:
+    get:
+      tags: [Services]
+      operationId: listServiceQuickPhrases
+      summary: Listar las frases rápidas del equipo
+      parameters:
+        - name: field
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [IMPORTANT_INFORMATION]
+            default: IMPORTANT_INFORMATION
+      responses:
+        "200":
+          description: Frases activas en su orden
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ServiceQuickPhrase"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [Services]
+      operationId: replaceServiceQuickPhrases
+      summary: Reemplazar la lista completa de frases rápidas
+      description: Edita, reordena, agrega y quita frases en una sola operación. Las frases que no vengan en la lista se desactivan.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceQuickPhraseListRequest"
+      responses:
+        "200":
+          description: Lista resultante
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ServiceQuickPhrase"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
   /services/{serviceExternalId}:
     get:
       tags: [Services]
@@ -1596,6 +1652,41 @@ components:
           minLength: 1
           maxLength: 500
       additionalProperties: false
+    ServiceQuickPhrase:
+      type: object
+      required: [externalId, phrase, displayOrder]
+      properties:
+        externalId:
+          type: string
+          format: uuid
+        phrase:
+          type: string
+          maxLength: 500
+        displayOrder:
+          type: integer
+          minimum: 1
+    ServiceQuickPhraseListRequest:
+      type: object
+      required: [phrases]
+      properties:
+        field:
+          type: string
+          enum: [IMPORTANT_INFORMATION]
+        phrases:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [phrase]
+            properties:
+              externalId:
+                type: string
+                format: uuid
+                nullable: true
+              phrase:
+                type: string
+                minLength: 1
+                maxLength: 500
     ReportedFailureType:
       type: object
       required: [id, code, label, displayOrder, allowsFreeText, active]

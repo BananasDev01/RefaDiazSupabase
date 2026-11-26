@@ -250,3 +250,56 @@ export function validateTransitionPayload(
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true };
 }
+
+export const QUICK_PHRASE_FIELDS = ["IMPORTANT_INFORMATION"] as const;
+
+export function validateQuickPhrasesPayload(
+  payload: Record<string, unknown>,
+): ValidationResult {
+  const errors: Array<{ field: string; message: string }> = [];
+  if (
+    payload.field !== undefined &&
+    !QUICK_PHRASE_FIELDS.includes(
+      payload.field as typeof QUICK_PHRASE_FIELDS[number],
+    )
+  ) {
+    errors.push({ field: "field", message: "El campo no es válido" });
+  }
+  if (!Array.isArray(payload.phrases)) {
+    errors.push({ field: "phrases", message: "Debe ser un arreglo" });
+  } else if (payload.phrases.length > 100) {
+    errors.push({ field: "phrases", message: "Máximo 100 frases" });
+  } else {
+    payload.phrases.forEach((candidate, index) => {
+      const field = `phrases[${index}]`;
+      if (
+        !candidate || typeof candidate !== "object" || Array.isArray(candidate)
+      ) {
+        errors.push({ field, message: "Debe ser un objeto" });
+        return;
+      }
+      const item = candidate as Record<string, unknown>;
+      if (
+        item.externalId !== undefined && item.externalId !== null &&
+        !isUuid(item.externalId)
+      ) {
+        errors.push({
+          field: `${field}.externalId`,
+          message: "Debe ser un UUID válido",
+        });
+      }
+      if (typeof item.phrase !== "string" || !item.phrase.trim()) {
+        errors.push({
+          field: `${field}.phrase`,
+          message: "No puede estar vacía",
+        });
+      } else if (item.phrase.trim().length > 500) {
+        errors.push({
+          field: `${field}.phrase`,
+          message: "Máximo 500 caracteres",
+        });
+      }
+    });
+  }
+  return errors.length ? { ok: false, errors } : { ok: true };
+}
