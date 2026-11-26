@@ -179,6 +179,16 @@ export function validateServicePayload(
     errors.push({ field: "subtotal", message: "Debe ser un importe válido" });
   }
   if (
+    payload.internalNote !== undefined && payload.internalNote !== null &&
+    (typeof payload.internalNote !== "string" ||
+      payload.internalNote.length > 4000)
+  ) {
+    errors.push({
+      field: "internalNote",
+      message: "Debe ser texto de máximo 4000 caracteres",
+    });
+  }
+  if (
     payload.warrantyMonths !== undefined && payload.warrantyMonths !== null &&
     ![0, 3, 6, 12].includes(payload.warrantyMonths as number)
   ) {
@@ -218,7 +228,7 @@ export function validateServicePayload(
 
 export function validateTransitionPayload(
   payload: Record<string, unknown>,
-  action: "start" | "complete" | "cancel",
+  action: "start" | "complete" | "cancel" | "restore",
 ): ValidationResult {
   const errors: Array<{ field: string; message: string }> = [];
   if (!positiveInteger(payload.expectedVersion)) {

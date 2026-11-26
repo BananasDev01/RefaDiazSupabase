@@ -212,7 +212,7 @@ export async function handleServicesRequest(
 
   if (
     req.method === "POST" && segments.length === 2 &&
-    ["start", "complete", "cancel"].includes(segments[1])
+    ["start", "complete", "cancel", "restore"].includes(segments[1])
   ) {
     if (!isUuid(segments[0])) {
       return jsonResponse({
@@ -222,18 +222,14 @@ export async function handleServicesRequest(
     }
     const body = await readJsonObject(req);
     if (body instanceof Response) return body;
-    const action = segments[1] as "start" | "complete" | "cancel";
+    const action = segments[1] as "start" | "complete" | "cancel" | "restore";
     const validation = validateTransitionPayload(body, action);
     if (!validation.ok) return validationResponse(validation.errors);
 
     const { data, error } = await supabase.rpc("transition_service_v1", {
       p_external_id: segments[0],
       p_expected_version: body.expectedVersion,
-      p_action: segments[1] === "start"
-        ? "START"
-        : segments[1] === "complete"
-        ? "COMPLETE"
-        : "CANCEL",
+      p_action: action.toUpperCase(),
       p_actor_user_id: authorization.userId,
       p_reason: action === "cancel" ? (body.reason as string).trim() : null,
     });

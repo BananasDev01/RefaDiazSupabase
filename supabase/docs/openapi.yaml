@@ -576,6 +576,35 @@ paths:
           $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+  /services/{serviceExternalId}/restore:
+    post:
+      tags: [Services]
+      operationId: restoreService
+      summary: Restaurar un servicio eliminado
+      description: Regresa una orden `CANCELLED` a `COMPLETED` si ya se había completado, o a `IN_PROGRESS`.
+      parameters:
+        - $ref: "#/components/parameters/ServiceExternalIdPath"
+      requestBody:
+        $ref: "#/components/requestBodies/VersionTransition"
+      responses:
+        "200":
+          description: Servicio restaurado o reintento idempotente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
   /services/{serviceExternalId}/cancel:
     post:
       tags: [Services]
@@ -1473,6 +1502,10 @@ components:
           type: string
           maxLength: 500
           description: Solo para PART
+        internalNote:
+          type: [string, "null"]
+          maxLength: 4000
+          description: Nota privada única del taller; null la borra y omitirla la conserva
         serviceDate:
           type: string
           format: date
@@ -1694,6 +1727,10 @@ components:
         partDescription:
           $ref: "#/components/schemas/NullableString"
         cancellationReason:
+          $ref: "#/components/schemas/NullableString"
+        cancelledByName:
+          $ref: "#/components/schemas/NullableString"
+        internalNote:
           $ref: "#/components/schemas/NullableString"
         serviceDate:
           $ref: "#/components/schemas/NullableDate"
